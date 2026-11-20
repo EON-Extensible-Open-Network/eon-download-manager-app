@@ -1,6 +1,6 @@
 # EON Module ABI Exception
 
-**Version 1.0 — 2026-09-25, as applied to EON Office on 2026-11-19**
+**Version 1.0 — 2026-09-25, as applied to EON Download Manager on 2026-11-20**
 **Status: DRAFT.** This text has not yet been reviewed by a lawyer. See madde 13 and
 madde 33 of the project plan (`eon-docs/plan/eon-plan.md`). Do not rely on it as legal
 advice.
@@ -22,16 +22,16 @@ own choosing — including terms that are not compatible with the GNU GPL — pr
 all of the following conditions are met:
 
 1. **Defined boundary.** The Independent Module communicates with this Program
-   *exclusively* through the **EON Office application protocol and manifest format**, as
-   published in the `eon-office-spec` repository (`docs/protocol.md`,
-   `schemas/app-manifest.v0.schema.json`) at a released version. Communication through
+   *exclusively* through the **EON Download Manager hand-off and resume-state formats**, as
+   published in the `eon-download-manager-spec` repository (`docs/handoff.md`,
+   `docs/resume-state.md`, `schemas/*.v0.schema.json`) at a released version. Communication through
    any other interface — direct linking against this Program's internal symbols,
    inclusion of its source, use of its private data structures, or patching its build —
    is outside this permission.
 
 2. **No derivation.** The Independent Module does not contain, copy, or derive from
    source code of this Program, other than the interface declarations published in
-   `eon-office-spec`, which are licensed separately under Apache-2.0.
+   `eon-download-manager-spec`, which are licensed separately under Apache-2.0.
 
 3. **GPL still applies to this Program.** You continue to comply with the GNU GPL in
    full for this Program itself, including the obligation to convey its Corresponding
@@ -50,10 +50,10 @@ from your version.
 
 ## Why this exception exists here
 
-An application that talks to the core over its socket is a separate program, and the GPL
-does not reach it whatever this file says. The exception matters for the day something
-runs *inside* the core — a storage backend, a connector — which madde 4's sandbox rules
-do not allow yet. It is granted now, at the first commit, because contributions are
+A browser extension or a script that hands downloads over through the published hand-off
+is a separate program, and the GPL does not reach it whatever this file says. The exception
+matters for the day something runs *inside* the program — a protocol handler, a
+post-processing step — which madde 4's sandbox rules do not allow yet. It is granted now, at the first commit, because contributions are
 accepted under the DCO and every contributor keeps their copyright: adding it later would
 need every contributor's agreement.
 
