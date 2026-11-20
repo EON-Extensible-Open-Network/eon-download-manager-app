@@ -74,6 +74,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test                                   # the engine against a local HTTP server
 target/debug/eon-download-manager --selftest # includes a real download
 node tools/ui-check.mjs --app target/debug/eon-download-manager.exe --shots shots
+node tools/browser-check.mjs target/debug/eon-download-manager.exe extension   # real Edge, real extension
 ```
 
 Free for everyone who downloads with it. If organisations ever pay, it will be for a
