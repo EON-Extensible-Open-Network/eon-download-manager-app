@@ -70,9 +70,9 @@ const sha = (name) => createHash("sha256").update(file(name, sizes[name])).diges
 writeFileSync(join(data, "settings.json"), JSON.stringify({
   language: "en", theme: "dark", folder: downloads, sort_by_category: true,
   engine: { max_active: 3, connections: 8, speed_limit: 0, ignore_changes: false, queue_running: true },
-  watch_clipboard: false, close_to_tray: false, notify: false, tray_hint_shown: true,
+  watch_clipboard: false, close_to_tray: false, notify: false, tray_hint_shown: true, browser_integration: false, onboarded: true,
 }));
-const env = { ...process.env, EON_DM_DATA: data, EON_WEBVIEW_ARGS: `--remote-debugging-port=${port}` };
+const env = { ...process.env, EON_DM_DATA: data, EON_DM_NO_REGISTRATION: "1", EON_WEBVIEW_ARGS: `--remote-debugging-port=${port}` };
 
 let cdp;
 async function devtools() {
@@ -154,6 +154,17 @@ try {
 
   check("the window opens on its own, empty, ready to paste", await until(`document.body.dataset.ready === '1' && !document.getElementById('empty').hidden && document.activeElement.id === 'add-url'`, 25000));
   await shot("01-empty");
+
+  // The browser walkthrough: three steps, waiting for the extension, then
+  // connected once it says hello (here: a ping through the real native host).
+  await js(`document.getElementById('empty-browsers').click()`);
+  check("the walkthrough opens and waits for the extension", await until(`document.getElementById('connect').open && document.getElementById('step-seen').className === 'waiting'`));
+  await host({ handoff: 0, kind: "ping", source: { browser: "edge", extension: "0.0.0" } });
+  check("an extension's hello shows as connected", await until(`document.getElementById('step-seen').className === 'done' && document.getElementById('step-seen-text').textContent.includes('Edge')`, 8000));
+  await shot("05a-connect");
+  await js(`document.querySelector('#connect-form button[type=submit]').click()`);
+  await until(`!document.getElementById('connect').open`);
+
 
   // One link: paste, look, download.
   const iso = "ubuntu-24.04-desktop-amd64.iso";

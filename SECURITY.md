@@ -19,8 +19,8 @@ repository; the organisation-wide policy is
   them on a redirect elsewhere. They are deleted from the resume state when the download
   finishes.
 - **The browser hand-off.** The executable doubles as a native messaging host, reachable
-  only from the extension ids listed in its manifest, and only after the person pressed
-  *Connect browsers* (per user, no administrator rights; *Disconnect* removes it). It
+  only from the extension ids listed in its manifest. It is registered per user at every
+  start (no administrator rights); *Disconnect* removes it and keeps it removed. It
   reads one message of at most 8 MiB, accepts only `http(s)` addresses, writes the message
   to the data folder's `inbox/`, and wakes the window. `--handoff` reads only files in
   that inbox, so a command line cannot make the program read or delete another file. The

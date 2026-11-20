@@ -318,6 +318,17 @@ dialog[open] { animation: rise var(--med) var(--ease); }
 .day-row label { border: 1px solid var(--line-strong); border-radius: 9px; padding: 0.3rem 0.6rem; cursor: pointer; display: inline-flex; gap: 0.35rem; align-items: center; }
 .day-row label:has(input:checked) { border-color: var(--pulse); background: var(--selected); }
 .about { font-size: 0.75rem; }
+.small { font-size: 0.76rem; }
+.setup { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.9rem; counter-reset: step; }
+.setup li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 0.8rem; counter-increment: step; }
+.setup h3 { font-size: 0.9rem; margin-bottom: 0.2rem; }
+.setup .row-buttons { margin: 0.55rem 0 0.4rem; }
+.step-mark { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; border: 1.5px solid var(--line-strong); color: var(--haze); font-weight: 600; font-size: 0.85rem; }
+.step-mark::before { content: counter(step); }
+.setup li.done .step-mark { background: var(--mint); border-color: var(--mint); color: var(--on-pulse); }
+.setup li.done .step-mark::before { content: "\2713"; }
+.setup li.waiting .step-mark { border-color: var(--current); color: var(--current); animation: breathe 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .setup li.waiting .step-mark { animation: none; } }
 .countdown { font-size: 2.6rem; font-weight: 200; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 
 /* ---- toasts ----------------------------------------------------------------------------- */

@@ -120,7 +120,12 @@ function badge(text) {
 
 // ---- 2. the context menu --------------------------------------------------------------
 
+// Say hello on install and on every browser start, so the application can
+// show that the extension is connected.
+api.runtime.onStartup.addListener(() => { send("ping").catch(() => {}); });
+
 api.runtime.onInstalled.addListener(() => {
+  send("ping").catch(() => {});
   api.contextMenus.removeAll(() => {
     api.contextMenus.create({ id: "eon-link", title: api.i18n.getMessage("menu_link"), contexts: ["link"] });
     api.contextMenus.create({ id: "eon-selection", title: api.i18n.getMessage("menu_selection"), contexts: ["selection"] });

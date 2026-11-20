@@ -68,6 +68,7 @@ const COMMANDS: &[&str] = &[
     "browsers",
     "connect_browsers",
     "disconnect_browsers",
+    "add_extension",
     "take_handoffs",
     "set_queue_running",
     "power",
@@ -403,10 +404,12 @@ fn save_settings(state: State<'_>, settings: AppSettings) -> AppSettings {
 }
 
 fn browser_status(data: &Path) -> Value {
-    native::status(data)
+    let seen = native::seen(data);
+    let list: Vec<Value> = native::status(data)
         .into_iter()
         .map(|(b, connected)| json!({ "browser": b, "connected": connected }))
-        .collect()
+        .collect();
+    json!({ "browsers": list, "seen": seen })
 }
 
 #[tauri::command(async)]
@@ -414,16 +417,38 @@ fn browsers(state: State<'_>) -> Value {
     browser_status(&state.data)
 }
 
+fn set_integration(state: &App, on: bool) {
+    let mut s = state.settings();
+    s.browser_integration = on;
+    s.save(&state.data);
+    *state
+        .settings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = s;
+}
+
 #[tauri::command(async)]
 fn connect_browsers(state: State<'_>) -> Result<Value, Failure> {
     native::connect(&state.data).map_err(|e| failure("browsers", e))?;
+    set_integration(&state, true);
     Ok(browser_status(&state.data))
 }
 
 #[tauri::command(async)]
 fn disconnect_browsers(state: State<'_>) -> Value {
     native::disconnect(&state.data);
+    set_integration(&state, false);
     browser_status(&state.data)
+}
+
+/// Write the extension out, open the browser's extensions page and the folder
+/// to load: the two things "Load unpacked" needs.
+#[tauri::command(async)]
+fn add_extension(state: State<'_>, browser: String) -> Result<String, Failure> {
+    let dir = native::write_extension(&state.data).map_err(|e| failure("extension", e))?;
+    let _ = tauri_plugin_opener::open_path(&dir, None::<&str>);
+    native::open_extensions_page(&browser).map_err(|e| failure("browser", e))?;
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 /// Hand-offs that arrived before the interface was listening.
@@ -842,6 +867,11 @@ fn window(args: Vec<String>) {
                     "en".into()
                 }),
             }));
+            // Browsers learn where this program is at every start (per user, no
+            // administrator rights), unless the person disconnected them.
+            if app.state::<Arc<App>>().settings().browser_integration {
+                let _ = native::connect(&data);
+            }
             main_window(&handle)?;
             tray(&handle)?;
             ticker(handle.clone(), dirty);
@@ -877,6 +907,7 @@ fn window(args: Vec<String>) {
             browsers,
             connect_browsers,
             disconnect_browsers,
+            add_extension,
             take_handoffs,
             set_queue_running,
             power,

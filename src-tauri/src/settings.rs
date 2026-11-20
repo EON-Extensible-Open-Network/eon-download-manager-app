@@ -64,6 +64,11 @@ pub struct AppSettings {
     pub scheduler: Scheduler,
     /// The tray hint is shown once.
     pub tray_hint_shown: bool,
+    /// Browsers know where this program is (native messaging, per user). On by
+    /// default and renewed at every start; "Disconnect" turns it off.
+    pub browser_integration: bool,
+    /// The browser walkthrough has been seen (or dismissed) once.
+    pub onboarded: bool,
 }
 
 impl Default for AppSettings {
@@ -79,6 +84,8 @@ impl Default for AppSettings {
             notify: true,
             scheduler: Scheduler::default(),
             tray_hint_shown: false,
+            browser_integration: true,
+            onboarded: false,
         }
     }
 }

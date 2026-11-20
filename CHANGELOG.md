@@ -5,6 +5,21 @@ SPDX-FileCopyrightText: 2026 EON contributors
 
 # Changelog
 
+## Unreleased
+
+- **Settings apply to running downloads.** Connections per download, downloads at the same
+  time and the speed limit change the transfer in place: fewer connections means the
+  newest finish what they hold and step back; fewer downloads at once sends the newest back
+  to the queue. Nothing downloaded is lost. Each download can also have its own number of
+  connections.
+- **Catching browser downloads sets itself up.** The native host is registered at every
+  start; the extension ships inside the program, and a first-start walkthrough opens the
+  browser's extensions page and the folder, then shows the extension as connected the
+  moment it says hello.
+- The licence exception now names this product's own interface as its boundary (it named
+  EON Office's, copied by mistake).
+- Tests run under their own application identity and never touch the person's registry.
+
 ## v0.0.0 — first alpha
 
 - **Engine:** dynamic segmentation (IDM's rule: a free connection halves the largest

@@ -49,10 +49,11 @@ Linux and macOS.
 
 1. Download the file for your system from the [latest release](https://github.com/EON-Extensible-Open-Network/eon-download-manager-app/releases)
    and check it against `SHA256SUMS.txt`. Run it; there is nothing to install.
-2. **Browser** (optional): in the window, *Settings → Connect browsers*. Then add the
-   extension: download `eon-download-manager-extension-*.zip` from the same release,
-   unzip it, and in Chrome or Edge open `chrome://extensions`, turn on *Developer mode*,
-   *Load unpacked*, and choose the folder. (Store listings will come.)
+2. **Browser** (optional): the first start shows the way. Browsers are told where the
+   program is on their own; *Add to Chrome / Edge / Brave* opens that browser's extensions
+   page and the extension's folder — turn on *Developer mode*, choose *Load unpacked*,
+   pick the folder. The window shows when the extension says hello. (Store listings, which
+   make this one click, will come.)
 
 On Windows, Smart App Control — if it is on — refuses unsigned downloads.
 

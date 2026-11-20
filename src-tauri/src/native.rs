@@ -124,6 +124,146 @@ fn write_message(output: &mut impl Write, value: &Value) {
     let _ = output.flush();
 }
 
+/// The extension, carried inside the executable: written out on request so a
+/// person can add it to a browser without downloading anything else.
+pub const EXTENSION: &[(&str, &[u8])] = &[
+    (
+        "manifest.json",
+        include_bytes!("../../extension/manifest.json"),
+    ),
+    (
+        "background.js",
+        include_bytes!("../../extension/background.js"),
+    ),
+    ("content.js", include_bytes!("../../extension/content.js")),
+    ("popup.html", include_bytes!("../../extension/popup.html")),
+    ("popup.js", include_bytes!("../../extension/popup.js")),
+    ("popup.css", include_bytes!("../../extension/popup.css")),
+    (
+        "_locales/en/messages.json",
+        include_bytes!("../../extension/_locales/en/messages.json"),
+    ),
+    (
+        "_locales/tr/messages.json",
+        include_bytes!("../../extension/_locales/tr/messages.json"),
+    ),
+    (
+        "icons/icon-16.png",
+        include_bytes!("../../extension/icons/icon-16.png"),
+    ),
+    (
+        "icons/icon-32.png",
+        include_bytes!("../../extension/icons/icon-32.png"),
+    ),
+    (
+        "icons/icon-48.png",
+        include_bytes!("../../extension/icons/icon-48.png"),
+    ),
+    (
+        "icons/icon-128.png",
+        include_bytes!("../../extension/icons/icon-128.png"),
+    ),
+];
+
+/// Write the extension to `<data>/extension` (replacing an older copy) and
+/// return that folder.
+pub fn write_extension(data_dir: &Path) -> Result<PathBuf, String> {
+    let dir = data_dir.join("extension");
+    let _ = std::fs::remove_dir_all(&dir);
+    for (rel, bytes) in EXTENSION {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(dir)
+}
+
+/// The extension said hello (on install and on every browser start): remember
+/// which browser and when, so the window can say "connected".
+fn mark_seen(data_dir: &Path, message: &Value) {
+    let browser = message["source"]["browser"].as_str().unwrap_or("other");
+    let version = message["source"]["extension"].as_str().unwrap_or("");
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    let path = data_dir.join("extension-seen.json");
+    let mut seen: Value = std::fs::read(&path)
+        .ok()
+        .and_then(|t| serde_json::from_slice(&t).ok())
+        .unwrap_or_else(|| json!({}));
+    seen[browser] = json!({ "version": version, "at": at });
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(path, seen.to_string());
+}
+
+/// Browsers whose extension has said hello, with when.
+pub fn seen(data_dir: &Path) -> Value {
+    std::fs::read(data_dir.join("extension-seen.json"))
+        .ok()
+        .and_then(|t| serde_json::from_slice(&t).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+/// Open a browser's extensions page, where "Load unpacked" is.
+pub fn open_extensions_page(browser: &str) -> Result<(), String> {
+    let (exe, page) = match browser {
+        "edge" => ("msedge.exe", "edge://extensions/"),
+        "brave" => ("brave.exe", "brave://extensions/"),
+        _ => ("chrome.exe", "chrome://extensions/"),
+    };
+    let program = browser_path(exe).ok_or_else(|| format!("{browser} is not installed"))?;
+    std::process::Command::new(program)
+        .arg(page)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+fn browser_path(exe: &str) -> Option<PathBuf> {
+    let key = format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}");
+    for hive in [
+        winreg::enums::HKEY_CURRENT_USER,
+        winreg::enums::HKEY_LOCAL_MACHINE,
+    ] {
+        if let Ok(k) = winreg::RegKey::predef(hive).open_subkey(&key) {
+            if let Ok(path) = k.get_value::<String, _>("") {
+                let p = PathBuf::from(path.trim_matches('"'));
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn browser_path(exe: &str) -> Option<PathBuf> {
+    let names: &[&str] = match exe {
+        "msedge.exe" => &["microsoft-edge", "microsoft-edge-stable"],
+        "brave.exe" => &["brave-browser", "brave"],
+        _ => &[
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ],
+    };
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        for n in names {
+            let p = dir.join(n);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// The host: one message in, the window told, one reply out.
 pub fn run_host(data_dir: &Path) -> i32 {
     let mut stdin = std::io::stdin().lock();
@@ -136,6 +276,7 @@ pub fn run_host(data_dir: &Path) -> i32 {
         Ok(message) => match check(&message) {
             Err(e) => json!({ "ok": false, "error": { "code": "invalid", "message": e } }),
             Ok(h) if h.kind == "ping" => {
+                mark_seen(data_dir, &message);
                 json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") })
             }
             Ok(h) => match deliver(data_dir, &h) {
@@ -359,6 +500,10 @@ fn manifest_path(data_dir: &Path, browser: Browser) -> PathBuf {
 /// Tell every supported browser where the host is. Per user; no
 /// administrator rights.
 pub fn connect(data_dir: &Path) -> Result<(), String> {
+    // Tests drive the real window without touching the person's registry.
+    if std::env::var_os("EON_DM_NO_REGISTRATION").is_some() {
+        return Ok(());
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     for browser in Browser::ALL {
         install(browser, data_dir, &exe)?;
@@ -399,6 +544,9 @@ fn install(browser: Browser, _data_dir: &Path, exe: &Path) -> Result<(), String>
 
 /// Undo [`connect`].
 pub fn disconnect(data_dir: &Path) {
+    if std::env::var_os("EON_DM_NO_REGISTRATION").is_some() {
+        return;
+    }
     for browser in Browser::ALL {
         #[cfg(windows)]
         {

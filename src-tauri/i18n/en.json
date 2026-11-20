@@ -173,5 +173,19 @@
   "tray.hint.body": "EON Download Manager keeps going in the tray. Quit it from there.",
   "deck.mosaic": "The file, assembled from {n} parts",
   "fact.connections": "Connections",
-  "connections.auto": "As in settings ({n})"
+  "connections.auto": "As in settings ({n})",
+  "connect.title": "Catch downloads from your browser",
+  "connect.lead": "Click a download in your browser and it comes here, faster and resumable. Two steps, once.",
+  "connect.host.title": "Your browsers know EON Download Manager",
+  "connect.host.yes": "Done for {list}.",
+  "connect.host.no": "Not yet. This happens by itself when the program starts.",
+  "connect.ext.title": "Add the EON extension",
+  "connect.ext.help": "Its extensions page and a folder open. Turn on Developer mode, choose Load unpacked, and pick that folder.",
+  "connect.firefox": "Firefox needs Mozilla's signature on the extension; it comes with the store listing.",
+  "connect.seen.title": "Connected",
+  "connect.seen.yes": "The extension in {browser} is talking to this program. Click any download and it comes here.",
+  "connect.seen.wait": "Waiting for the extension to say hello…",
+  "connect.done": "Done",
+  "connect.opened": "{browser}'s extensions page and the folder are open",
+  "settings.setup": "Set up the extension"
 }

@@ -42,7 +42,7 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
-writeFileSync(join(data, "settings.json"), JSON.stringify({ language: "en", theme: "dark", folder: downloads, engine: { max_active: 3, connections: 8, speed_limit: 0, ignore_changes: false, queue_running: true }, watch_clipboard: false, close_to_tray: false, notify: false, tray_hint_shown: true }));
+writeFileSync(join(data, "settings.json"), JSON.stringify({ language: "en", theme: "dark", folder: downloads, engine: { max_active: 3, connections: 8, speed_limit: 0, ignore_changes: false, queue_running: true }, watch_clipboard: false, close_to_tray: false, notify: false, tray_hint_shown: true, browser_integration: false, onboarded: true }));
 const wrapper = join(root, "host.bat");
 writeFileSync(wrapper, `@echo off\r\nset EON_DM_DATA=${data}\r\n"${APP}" %*\r\n`);
 const manifest = join(root, "host.json");
@@ -82,8 +82,13 @@ try {
   edge = spawn(EDGE, [`--user-data-dir=${edgeProfile}`, `--load-extension=${EXT}`, `--disable-extensions-except=${EXT}`, `--remote-debugging-port=${edgePort}`, "--no-first-run", "--no-default-browser-check", "--headless=new", `${base}/`], { stdio: "ignore" });
   const ext = await cdp(edgePort, (p) => p.type === "service_worker" && p.url.includes("piagpgnijlkmaacfoiknlbofkfnbjjgn"));
   check("Edge loaded the extension with the fixed id", true);
-  const ping = await ext.js(`chrome.runtime.sendNativeMessage("org.eon.download_manager", { handoff: 0, kind: "ping" }).then(r => JSON.stringify(r), e => "ERR " + e.message)`);
+  let ping;
+  for (let i = 0; i < 10 && !ping?.includes('"ok":true'); i++) {
+    ping = await ext.js(`chrome.runtime.sendNativeMessage("org.eon.download_manager", { handoff: 0, kind: "ping" }).then(r => JSON.stringify(r), e => "ERR " + e.message)`).catch((e) => String(e));
+    if (!ping?.includes('"ok":true')) await sleep(500);
+  }
   check("the extension reaches the application over native messaging", ping?.includes('"ok":true'), ping);
+  check("and says hello, so the window can show it connected", await until(async () => existsSync(join(data, "extension-seen.json")), 10000));
 
   const page = await cdp(edgePort, (p) => p.type === "page" && p.url.startsWith(base));
   await page.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: edgeDownloads }).catch(() => {});

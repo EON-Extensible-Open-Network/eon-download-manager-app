@@ -235,7 +235,8 @@ SPDX-FileCopyrightText: 2026 EON contributors
         <p class="muted" data-i18n="settings.browsers.help">Connect once, then add the EON extension to the browser. Downloads you start there come here.</p>
         <ul id="s-browsers" class="browser-list"></ul>
         <div class="row-buttons">
-          <button type="button" id="s-connect" class="secondary" data-i18n="settings.connect">Connect browsers</button>
+          <button type="button" id="s-setup" class="secondary" data-i18n="settings.setup">Set up the extension</button>
+          <button type="button" id="s-connect" class="ghost" data-i18n="settings.connect">Connect browsers</button>
           <button type="button" id="s-disconnect" class="ghost" data-i18n="settings.disconnect">Disconnect</button>
         </div>
         <div class="check"><input type="checkbox" id="s-clipboard"><label for="s-clipboard" data-i18n="settings.clipboard">Offer to download links I copy</label></div>
@@ -263,6 +264,48 @@ SPDX-FileCopyrightText: 2026 EON contributors
       <div class="sheet-actions">
         <button type="button" class="ghost settings-cancel" data-i18n="sheet.cancel">Cancel</button>
         <button type="submit" class="primary" data-i18n="settings.save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="connect" class="panel" aria-labelledby="connect-title">
+    <form id="connect-form" method="dialog">
+      <div class="panel-head">
+        <h2 id="connect-title" data-i18n="connect.title">Catch downloads from your browser</h2>
+        <button type="button" class="ghost icon-only connect-close" data-i18n-label="sheet.close" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="icons.svg#i-x"></use></svg></button>
+      </div>
+      <p class="muted" data-i18n="connect.lead">Click a download in your browser and it comes here, faster and resumable. Two steps, once.</p>
+      <ol class="setup">
+        <li id="step-host">
+          <span class="step-mark" aria-hidden="true"></span>
+          <div>
+            <h3 data-i18n="connect.host.title">Your browsers know EON Download Manager</h3>
+            <p id="step-host-text" class="muted"></p>
+          </div>
+        </li>
+        <li id="step-ext">
+          <span class="step-mark" aria-hidden="true"></span>
+          <div>
+            <h3 data-i18n="connect.ext.title">Add the EON extension</h3>
+            <p class="muted" data-i18n="connect.ext.help">Its extensions page and a folder open. Turn on Developer mode, choose Load unpacked, and pick that folder.</p>
+            <div class="row-buttons">
+              <button type="button" class="secondary" data-browser="chrome">Chrome</button>
+              <button type="button" class="secondary" data-browser="edge">Edge</button>
+              <button type="button" class="secondary" data-browser="brave">Brave</button>
+            </div>
+            <p class="muted small" data-i18n="connect.firefox">Firefox needs Mozilla's signature on the extension; it comes with the store listing.</p>
+          </div>
+        </li>
+        <li id="step-seen">
+          <span class="step-mark" aria-hidden="true"></span>
+          <div>
+            <h3 data-i18n="connect.seen.title">Connected</h3>
+            <p id="step-seen-text" class="muted" role="status"></p>
+          </div>
+        </li>
+      </ol>
+      <div class="sheet-actions">
+        <button type="submit" class="primary" data-i18n="connect.done">Done</button>
       </div>
     </form>
   </dialog>

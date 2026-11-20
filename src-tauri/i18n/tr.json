@@ -173,5 +173,19 @@
   "tray.hint.body": "EON Download Manager sistem tepsisinde çalışmaya devam ediyor. Oradan çıkabilirsiniz.",
   "deck.mosaic": "Dosya, {n} parçadan birleştirildi",
   "fact.connections": "Bağlantı",
-  "connections.auto": "Ayarlardaki gibi ({n})"
+  "connections.auto": "Ayarlardaki gibi ({n})",
+  "connect.title": "Tarayıcınızdaki indirmeleri yakalayın",
+  "connect.lead": "Tarayıcıda bir indirmeye tıklayın, buraya gelsin: daha hızlı, sürdürülebilir. İki adım, bir kez.",
+  "connect.host.title": "Tarayıcılarınız EON Download Manager'ı tanıyor",
+  "connect.host.yes": "{list} için tamam.",
+  "connect.host.no": "Henüz değil. Program açılınca kendiliğinden olur.",
+  "connect.ext.title": "EON eklentisini ekleyin",
+  "connect.ext.help": "Uzantılar sayfası ve bir klasör açılır. Geliştirici modunu açın, Paketlenmemiş öğe yükle'yi seçin ve o klasörü gösterin.",
+  "connect.firefox": "Firefox, eklentide Mozilla imzası istiyor; mağaza yayınıyla gelecek.",
+  "connect.seen.title": "Bağlandı",
+  "connect.seen.yes": "{browser} içindeki eklenti bu programla konuşuyor. Herhangi bir indirmeye tıklayın, buraya gelir.",
+  "connect.seen.wait": "Eklentinin merhaba demesi bekleniyor…",
+  "connect.done": "Tamam",
+  "connect.opened": "{browser} uzantılar sayfası ve klasör açıldı",
+  "settings.setup": "Eklentiyi kur"
 }

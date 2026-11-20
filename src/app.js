@@ -946,8 +946,11 @@ async function openSettings() {
   $("settings").showModal();
 }
 
-function renderBrowsers(list) {
-  const names = { chrome: "Chrome", edge: "Edge", brave: "Brave", vivaldi: "Vivaldi", chromium: "Chromium", firefox: "Firefox" };
+const BROWSER_NAMES = { chrome: "Chrome", edge: "Edge", brave: "Brave", vivaldi: "Vivaldi", chromium: "Chromium", firefox: "Firefox", opera: "Opera" };
+
+function renderBrowsers(status) {
+  const list = status.browsers || [];
+  const names = BROWSER_NAMES;
   $("s-browsers").replaceChildren(...list.map((b) => el("li", { class: b.connected ? "on" : "" },
     el("span", { class: "dot", "aria-hidden": "true" }),
     el("span", { text: names[b.browser] || b.browser }),
@@ -958,6 +961,49 @@ $("s-connect").addEventListener("click", async () => {
   try { renderBrowsers(await invoke("connect_browsers")); announce(t("browser.done")); } catch (e) { fail(e); }
 });
 $("s-disconnect").addEventListener("click", async () => renderBrowsers(await invoke("disconnect_browsers")));
+$("s-setup").addEventListener("click", () => { $("settings").close(); openConnect(); });
+
+// ---- connecting a browser --------------------------------------------------------
+
+let connectTimer = 0;
+async function refreshConnect() {
+  const status = await invoke("browsers");
+  const hosts = (status.browsers || []).filter((b) => b.connected).map((b) => BROWSER_NAMES[b.browser] || b.browser);
+  const seen = Object.entries(status.seen || {}).sort((a, b) => b[1].at - a[1].at);
+  $("step-host").className = hosts.length || seen.length ? "done" : "";
+  $("step-host-text").textContent = hosts.length ? t("connect.host.yes", { list: hosts.join(", ") }) : seen.length ? t("connect.host.yes", { list: BROWSER_NAMES[seen[0][0]] || seen[0][0] }) : t("connect.host.no");
+  $("step-ext").className = seen.length ? "done" : "";
+  $("step-seen").className = seen.length ? "done" : "waiting";
+  $("step-seen-text").textContent = seen.length
+    ? t("connect.seen.yes", { browser: BROWSER_NAMES[seen[0][0]] || seen[0][0] })
+    : t("connect.seen.wait");
+}
+
+async function openConnect() {
+  if (!settings.browser_integration) await invoke("connect_browsers").catch(() => {});
+  await refreshConnect();
+  if (!$("connect").open) $("connect").showModal();
+  window.clearInterval(connectTimer);
+  connectTimer = window.setInterval(() => { if ($("connect").open) refreshConnect(); }, 1500);
+}
+
+for (const b of document.querySelectorAll("#connect [data-browser]")) {
+  b.addEventListener("click", async () => {
+    try {
+      await invoke("add_extension", { browser: b.dataset.browser });
+      announce(t("connect.opened", { browser: b.textContent }));
+    } catch (e) {
+      fail(e);
+    }
+  });
+}
+$("connect").addEventListener("close", async () => {
+  window.clearInterval(connectTimer);
+  if (!settings.onboarded) {
+    settings = await invoke("save_settings", { settings: { ...settings, onboarded: true } });
+  }
+});
+for (const b of document.querySelectorAll(".connect-close")) b.addEventListener("click", () => $("connect").close());
 $("s-folder-change").addEventListener("click", async () => {
   const picked = await invoke("pick_folder", { current: settingsFolder || downloadsDir });
   if (picked) { settingsFolder = picked; $("s-folder").textContent = picked; }
@@ -986,7 +1032,7 @@ $("settings-form").addEventListener("submit", async (e) => {
 });
 for (const b of document.querySelectorAll(".settings-cancel")) b.addEventListener("click", () => $("settings").close());
 $("settings-open").addEventListener("click", openSettings);
-$("empty-browsers").addEventListener("click", openSettings);
+$("empty-browsers").addEventListener("click", () => openConnect());
 
 // ---- the scheduler ------------------------------------------------------------------------------
 
@@ -1118,6 +1164,8 @@ async function start() {
   drawEmpty();
   tickScheduler();
   await takeHandoffs();
+  // First start: show how to catch downloads from the browser, once.
+  if (!settings.onboarded && !document.querySelector("dialog[open]")) await openConnect();
   if (!document.querySelector("dialog[open]")) $("add-url").focus();
   document.body.dataset.ready = "1";
 }
