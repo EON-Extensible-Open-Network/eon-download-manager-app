@@ -48,6 +48,13 @@ allow = [
     "Unlicense",
     "0BSD",
     "MIT-0",
+    # The CA root bundle (webpki-root-certs), reached through rustls-platform-
+    # verifier where the system has no usable trust store of its own.
+    # CDLA-Permissive-2.0 is a licence for *data* -- a list of certificate
+    # authorities -- that attaches no conditions to downstream use. As in
+    # eon-office-marketplace and eon-stream-engine: the alternative is a TLS
+    # stack with no trust roots.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 

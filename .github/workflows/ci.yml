@@ -33,6 +33,8 @@ jobs:
       # The engine against a real HTTP server on the runner: segmentation,
       # resume after a crash, changed files, expired links, HLS with AES-128.
       - run: cargo test
+      # `cargo test` builds the binary only for packages with integration tests.
+      - run: cargo build
       - name: Self-test (includes a real download)
         shell: bash
         run: |
