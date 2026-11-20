@@ -61,6 +61,9 @@ confidence-threshold = 0.93
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# The window depends on the engine by path, in this workspace; both are
+# unpublished (publish = false). Registry dependencies stay version-pinned.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
