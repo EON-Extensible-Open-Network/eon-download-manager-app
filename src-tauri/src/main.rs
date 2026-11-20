@@ -235,6 +235,10 @@ struct AddArgs {
     variant: Option<String>,
     #[serde(default)]
     connections: Option<u32>,
+    #[serde(default)]
+    media: Option<eon_dm_engine::media::MediaSpec>,
+    #[serde(default)]
+    convert: Option<String>,
 }
 
 #[tauri::command(async)]
@@ -256,6 +260,8 @@ fn add(state: State<'_>, args: AddArgs) -> Result<String, Failure> {
         start: args.start,
         variant: args.variant,
         connections: args.connections,
+        media: args.media,
+        convert: args.convert,
     })?)
 }
 
@@ -284,6 +290,8 @@ fn add_batch(state: State<'_>, urls: Vec<String>, start: Start) -> Result<usize,
             start,
             variant: None,
             connections: None,
+            media: None,
+            convert: None,
         })?;
         added += 1;
     }
@@ -527,6 +535,8 @@ fn deliver(app: &tauri::AppHandle, handoff: Handoff) {
                 start,
                 variant: None,
                 connections: None,
+                media: None,
+                convert: None,
             });
         }
         return;

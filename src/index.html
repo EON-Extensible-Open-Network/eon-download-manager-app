@@ -132,6 +132,10 @@ SPDX-FileCopyrightText: 2026 EON contributors
             <p id="sheet-meta" class="sheet-meta"></p>
           </div>
         </div>
+        <div id="sheet-format" class="field format-field" hidden>
+          <label for="sheet-format-select" class="field-label" data-i18n="sheet.format">Save as</label>
+          <select id="sheet-format-select"></select>
+        </div>
         <fieldset id="sheet-variants" class="variants" hidden>
           <legend data-i18n="sheet.quality">Quality</legend>
           <div id="sheet-variant-list" class="variant-list"></div>
@@ -219,6 +223,11 @@ SPDX-FileCopyrightText: 2026 EON contributors
           <select id="s-active"></select>
           <label for="s-limit" data-i18n="settings.limit">Speed limit</label>
           <select id="s-limit"></select>
+          <label for="s-format" data-i18n="settings.format">Format</label>
+          <select id="s-format">
+            <option value="original" data-i18n="settings.format.original">Keep the original</option>
+            <option value="ask" data-i18n="settings.format.ask">Ask me each time</option>
+          </select>
         </div>
         <div class="field">
           <span class="field-label" id="s-folder-label" data-i18n="settings.folder">Save downloads to</span>

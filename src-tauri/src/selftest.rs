@@ -121,6 +121,8 @@ fn download() -> Vec<String> {
                 start: Start::Now,
                 variant: None,
                 connections: None,
+                media: None,
+                convert: None,
             })
             .map_err(|e| e.to_string())?;
         let end = Instant::now() + Duration::from_secs(60);

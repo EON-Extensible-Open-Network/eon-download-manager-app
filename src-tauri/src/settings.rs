@@ -69,6 +69,9 @@ pub struct AppSettings {
     pub browser_integration: bool,
     /// The browser walkthrough has been seen (or dismissed) once.
     pub onboarded: bool,
+    /// Ask, when adding, which format to save in (sound only, a still picture
+    /// from a GIF, ...); otherwise the original is kept.
+    pub ask_format: bool,
 }
 
 impl Default for AppSettings {
@@ -86,6 +89,7 @@ impl Default for AppSettings {
             tray_hint_shown: false,
             browser_integration: true,
             onboarded: false,
+            ask_format: false,
         }
     }
 }

@@ -54,6 +54,8 @@ fn add(engine: &Engine, url: &str, folder: &Path, start: Start) -> String {
             start,
             variant: None,
             connections: None,
+            media: None,
+            convert: None,
         })
         .unwrap()
 }
@@ -372,6 +374,8 @@ fn an_encrypted_hls_video_downloads_and_decrypts() {
             start: Start::Now,
             variant: None,
             connections: None,
+            media: None,
+            convert: None,
         })
         .unwrap();
     let v = done(&e, &id, 30);

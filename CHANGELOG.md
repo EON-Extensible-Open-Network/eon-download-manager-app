@@ -18,6 +18,13 @@ SPDX-FileCopyrightText: 2026 EON contributors
   moment it says hello.
 - The licence exception now names this product's own interface as its boundary (it named
   EON Office's, copied by mistake).
+- **Formats.** *Settings → Format* keeps the original or asks each time; asked, the add
+  sheet offers what the file can become: sound only (MP3, M4A), picture without sound,
+  MP4 or MKV, a GIF as a still picture or a video. The converter is fetched when first
+  needed and checked against its published SHA-256.
+- **Pages that play video or sound** can be added like a file: the add sheet shows the
+  qualities on offer, and the download pauses, resumes and shows its progress like any
+  other.
 - Tests run under their own application identity and never touch the person's registry.
 
 ## v0.0.0 — first alpha

@@ -187,5 +187,16 @@
   "connect.seen.wait": "Eklentinin merhaba demesi bekleniyor…",
   "connect.done": "Tamam",
   "connect.opened": "{browser} uzantılar sayfası ve klasör açıldı",
-  "settings.setup": "Eklentiyi kur"
+  "settings.setup": "Eklentiyi kur",
+  "sheet.format": "Farklı kaydet",
+  "format.best": "Video, en iyi kalite",
+  "format.height": "Video, {h}p",
+  "format.audio": "Yalnızca ses ({f})",
+  "format.silent": "Yalnızca görüntü, sessiz",
+  "format.as": "{f} olarak",
+  "format.still": "Durağan resim ({f})",
+  "format.original": "Olduğu gibi ({f})",
+  "settings.format": "Biçim",
+  "settings.format.original": "Orijinali koru",
+  "settings.format.ask": "Her seferinde sor"
 }

@@ -187,5 +187,16 @@
   "connect.seen.wait": "Waiting for the extension to say hello…",
   "connect.done": "Done",
   "connect.opened": "{browser}'s extensions page and the folder are open",
-  "settings.setup": "Set up the extension"
+  "settings.setup": "Set up the extension",
+  "sheet.format": "Save as",
+  "format.best": "Video, best quality",
+  "format.height": "Video, {h}p",
+  "format.audio": "Sound only ({f})",
+  "format.silent": "Picture only, without sound",
+  "format.as": "As {f}",
+  "format.still": "A still picture ({f})",
+  "format.original": "As it is ({f})",
+  "settings.format": "Format",
+  "settings.format.original": "Keep the original",
+  "settings.format.ask": "Ask me each time"
 }

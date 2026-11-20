@@ -15,8 +15,10 @@ use crate::category::Category;
 use crate::hls::{self, Inspection};
 use crate::http::{self, Source};
 use crate::limiter::Limiter;
+use crate::media::{self, MediaInfo, MediaSpec, Pick};
 use crate::state::{self, Validators};
 use crate::transfer::{self, Live, Outcome};
+use crate::{convert, tools};
 use crate::{name, plan, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -41,6 +43,8 @@ pub enum Status {
 pub enum Kind {
     File,
     Hls,
+    /// A page that plays video or sound, fetched through the extractor.
+    Media,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +72,12 @@ struct Record {
     connections: Option<u32>,
     #[serde(default)]
     speed_limit: u64,
+    /// A page: what to keep from it.
+    #[serde(default)]
+    media: Option<MediaSpec>,
+    /// Save the finished file in this format (`mp4`, `mp3`, `png`, ...).
+    #[serde(default)]
+    convert: Option<String>,
 }
 
 /// What the engine is told by the front end's settings.
@@ -120,6 +130,9 @@ pub struct ProbeView {
     pub mime: Option<String>,
     pub category: Category,
     pub hls: Option<Inspection>,
+    /// A page that plays video or sound.
+    #[serde(default)]
+    pub media: Option<MediaInfo>,
     #[serde(skip)]
     validators: Validators,
 }
@@ -135,6 +148,12 @@ pub struct AddRequest {
     /// HLS: the media playlist of the chosen version.
     pub variant: Option<String>,
     pub connections: Option<u32>,
+    /// A page: what to keep (the best when absent).
+    #[serde(default)]
+    pub media: Option<MediaSpec>,
+    /// Save the finished file in this format; absent keeps the original.
+    #[serde(default)]
+    pub convert: Option<String>,
 }
 
 /// One connection's share of the file, for drawing.
@@ -226,6 +245,8 @@ type Listener = Box<dyn Fn(Event) + Send + Sync>;
 
 struct Inner {
     rt: tokio::runtime::Handle,
+    /// Where the helper programs and passing cookie files live.
+    data_dir: PathBuf,
     client: reqwest::Client,
     global: Arc<Limiter>,
     list_file: PathBuf,
@@ -349,6 +370,7 @@ impl Engine {
                 http::client()?
             },
             rt: rt.handle().clone(),
+            data_dir: data_dir.to_owned(),
             global: Arc::new(Limiter::new(settings.speed_limit)),
             list_file,
             settings: Mutex::new(settings),
@@ -405,10 +427,24 @@ impl Engine {
     /// for a video playlist its versions.
     pub async fn probe(&self, source: Source) -> Result<ProbeView, Error> {
         let client = self.inner.client.clone();
+        let data_dir = self.inner.data_dir.clone();
         self.inner
             .rt
             .spawn(async move {
-                let p = http::probe(&client, &source).await?;
+                let p = match http::probe(&client, &source).await {
+                    Ok(p) if !p.hls && is_page(&p) => {
+                        return Ok(media_probe(&client, &data_dir, &source)
+                            .await
+                            .unwrap_or_else(|_| file_probe(&source, p, None)));
+                    }
+                    Ok(p) => p,
+                    // Some sites refuse a plain request but still play.
+                    Err(e) => {
+                        return media_probe(&client, &data_dir, &source)
+                            .await
+                            .map_err(|_| e)
+                    }
+                };
                 let hls = if p.hls {
                     Some(hls::inspect(&client, &source, &p.final_url).await?)
                 } else {
@@ -418,17 +454,10 @@ impl Engine {
                 if hls.as_ref().is_some_and(|h| h.mp4) {
                     file_name = format!("{}.mp4", file_name.trim_end_matches(".ts"));
                 }
-                Ok(ProbeView {
-                    url: source.url.clone(),
-                    final_url: p.final_url,
-                    category: Category::of(&file_name),
-                    file_name,
-                    length: if hls.is_some() { None } else { p.length },
-                    resumable: hls.is_some() || p.resumable,
-                    mime: p.mime,
-                    hls,
-                    validators: p.validators,
-                })
+                let mut view = file_probe(&source, p, hls);
+                view.category = Category::of(&file_name);
+                view.file_name = file_name;
+                Ok(view)
             })
             .await
             .map_err(|e| Error::Io(e.to_string()))?
@@ -436,6 +465,7 @@ impl Engine {
 
     /// Put a download in the list. Its name is reserved at once, so two adds
     /// of the same file never pick the same name.
+    #[allow(clippy::too_many_lines)] // one record built field by field
     pub fn add(&self, req: AddRequest) -> Result<String, Error> {
         let url = url::Url::parse(&req.source.url)
             .map_err(|_| Error::Invalid("not an address".into()))?;
@@ -453,12 +483,17 @@ impl Engine {
             .unwrap_or_else(|| "download".into());
         std::fs::create_dir_all(&req.folder).map_err(|e| Error::Io(e.to_string()))?;
         let path = name::unique(&req.folder, &wanted);
-        let _ = std::fs::File::create(state::part_path(&path));
-        let kind = if probe.is_some_and(|p| p.hls.is_some()) {
+        let kind = if probe.is_some_and(|p| p.media.is_some()) {
+            Kind::Media
+        } else if probe.is_some_and(|p| p.hls.is_some()) {
             Kind::Hls
         } else {
             Kind::File
         };
+        if kind != Kind::Media {
+            // The extractor names its own partial files.
+            let _ = std::fs::File::create(state::part_path(&path));
+        }
         let fetch = match kind {
             Kind::Hls => req
                 .variant
@@ -470,7 +505,20 @@ impl Engine {
                 })
                 .unwrap_or_else(|| req.source.url.clone()),
             Kind::File => probe.map_or_else(|| req.source.url.clone(), |p| p.final_url.clone()),
+            Kind::Media => probe
+                .and_then(|p| p.media.as_ref())
+                .map_or_else(|| req.source.url.clone(), |m| m.page.clone()),
         };
+        let media = (kind == Kind::Media).then(|| {
+            req.media.clone().unwrap_or(MediaSpec {
+                pick: Pick::Best,
+                container: None,
+            })
+        });
+        let convert = req
+            .convert
+            .clone()
+            .filter(|c| kind != Kind::Media && !convert::attempts(c, &path).is_empty());
         let id = new_id();
         let record = Record {
             id: id.clone(),
@@ -495,6 +543,8 @@ impl Engine {
             error: None,
             connections: req.connections,
             speed_limit: 0,
+            media,
+            convert,
         };
         let start_now = record.status == Status::Downloading;
         let conn = Arc::new(AtomicU32::new(
@@ -636,7 +686,7 @@ impl Engine {
                 .ok_or(Error::NotFound)?;
             (item.record.length, item.record.kind)
         };
-        if kind == Kind::Hls {
+        if kind != Kind::File {
             return Err(Error::Unsupported(
                 "a video stream cannot take a new address yet".into(),
             ));
@@ -746,12 +796,125 @@ impl Engine {
     }
 }
 
+/// An answer that is a web page rather than a file.
+fn is_page(p: &http::Probe) -> bool {
+    p.mime
+        .as_deref()
+        .is_some_and(|m| m.starts_with("text/html") || m.starts_with("application/xhtml"))
+}
+
+fn file_probe(source: &Source, p: http::Probe, hls: Option<Inspection>) -> ProbeView {
+    ProbeView {
+        url: source.url.clone(),
+        final_url: p.final_url,
+        category: Category::of(&p.file_name),
+        file_name: p.file_name,
+        length: if hls.is_some() { None } else { p.length },
+        resumable: hls.is_some() || p.resumable,
+        mime: p.mime,
+        hls,
+        media: None,
+        validators: p.validators,
+    }
+}
+
+fn cookie_path(data_dir: &Path, id: &str) -> PathBuf {
+    data_dir.join("cookies").join(format!("{id}.txt"))
+}
+
+/// Ask the extractor what a page plays.
+async fn media_probe(
+    client: &reqwest::Client,
+    data_dir: &Path,
+    source: &Source,
+) -> Result<ProbeView, Error> {
+    let ytdlp = tools::ytdlp(client, data_dir).await?;
+    let cookies = match source.cookies.as_deref().filter(|c| !c.is_empty()) {
+        Some(header) => {
+            let path = cookie_path(data_dir, &format!("probe-{}", new_id()));
+            media::cookie_file(&path, &source.url, header).map_err(|e| Error::Io(e.to_string()))?;
+            Some(path)
+        }
+        None => None,
+    };
+    let info = media::inspect(&ytdlp, &source.url, cookies.as_deref()).await;
+    if let Some(c) = cookies {
+        let _ = std::fs::remove_file(c);
+    }
+    let info = info?;
+    let ext = if info.has_video { "mp4" } else { "m4a" };
+    let file_name = format!("{}.{ext}", name::clean(&info.title));
+    Ok(ProbeView {
+        url: source.url.clone(),
+        final_url: info.page.clone(),
+        category: Category::of(&file_name),
+        file_name,
+        length: None,
+        resumable: true,
+        mime: None,
+        hls: None,
+        media: Some(info),
+        validators: Validators::default(),
+    })
+}
+
+async fn run_media(
+    inner: &Arc<Inner>,
+    record: &Record,
+    live: Arc<Live>,
+    stop: watch::Receiver<bool>,
+) -> Result<Outcome, Error> {
+    let ytdlp = tools::ytdlp(&inner.client, &inner.data_dir).await?;
+    // Joining picture and sound, and changing formats, need the converter.
+    let ffmpeg = tools::ffmpeg(&inner.client, &inner.data_dir).await.ok();
+    let cookies = match record.source.cookies.as_deref().filter(|c| !c.is_empty()) {
+        Some(header) => {
+            let path = cookie_path(&inner.data_dir, &record.id);
+            media::cookie_file(&path, &record.url, header).map_err(|e| Error::Io(e.to_string()))?;
+            Some(path)
+        }
+        None => None,
+    };
+    let folder = record
+        .path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let spec = record.media.clone().unwrap_or(MediaSpec {
+        pick: Pick::Best,
+        container: None,
+    });
+    let connections = record
+        .connections
+        .unwrap_or_else(|| inner.settings().connections);
+    let stem = record
+        .path
+        .file_stem()
+        .map_or_else(|| "video".to_owned(), |s| s.to_string_lossy().into_owned());
+    media::run(
+        media::MediaJob {
+            ytdlp,
+            ffmpeg,
+            url: record.url.clone(),
+            cookies,
+            folder,
+            spec,
+            connections,
+            stem,
+        },
+        live,
+        stop,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_lines)] // one view built field by field
 fn view(item: &Item) -> View {
     let r = &item.record;
     let segments = item.live.segments().clone();
     let running = item.stop.is_some();
     let (lanes, done, pieces) = match r.kind {
-        Kind::File => {
+        Kind::File | Kind::Media => {
             let done = if segments.is_empty() {
                 r.done
             } else {
@@ -795,8 +958,17 @@ fn view(item: &Item) -> View {
         }
     };
     let speed = if running { item.speed as u64 } else { 0 };
-    let eta = match (r.length, r.kind, pieces) {
-        (Some(len), Kind::File, _) if speed > 0 => Some(len.saturating_sub(done) / speed),
+    // A page's size is known once the extractor has chosen what to fetch.
+    let length = match r.kind {
+        Kind::Media => r
+            .length
+            .or_else(|| segments.first().map(|s| s.end).filter(|&e| e > 1)),
+        _ => r.length,
+    };
+    let eta = match (length, r.kind, pieces) {
+        (Some(len), Kind::File | Kind::Media, _) if speed > 0 => {
+            Some(len.saturating_sub(done) / speed)
+        }
         (_, Kind::Hls, Some((f, t))) if speed > 0 && f > 0 => {
             let per_piece = done / f;
             Some((t - f) * per_piece / speed)
@@ -816,9 +988,9 @@ fn view(item: &Item) -> View {
         category: r.category,
         kind: r.kind,
         status: r.status,
-        length: r.length,
+        length,
         done: if r.status == Status::Done {
-            r.length.unwrap_or(done)
+            length.unwrap_or(done)
         } else {
             done
         },
@@ -1012,6 +1184,7 @@ async fn drive(inner: Arc<Inner>, id: String, stop: watch::Receiver<bool>) {
                 )
                 .await
             }
+            Kind::Media => run_media(&inner, &record, live, stop.clone()).await,
             Kind::Hls => {
                 hls::run(
                     hls::HlsJob {
@@ -1044,6 +1217,27 @@ async fn drive(inner: Arc<Inner>, id: String, stop: watch::Receiver<bool>) {
             other => break other,
         }
     };
+    // Saved in the format the person chose, before it counts as done.
+    let result = match result {
+        Ok(Outcome::Done(path)) => {
+            let target = inner
+                .items()
+                .iter()
+                .find(|i| i.record.id == id)
+                .and_then(|i| i.record.convert.clone());
+            match target {
+                Some(target) => match tools::ffmpeg(&inner.client, &inner.data_dir).await {
+                    Ok(ffmpeg) => convert::convert(&ffmpeg, &path, &target)
+                        .await
+                        .map(Outcome::Done),
+                    Err(e) => Err(e),
+                },
+                None => Ok(Outcome::Done(path)),
+            }
+        }
+        other => other,
+    };
+    let _ = std::fs::remove_file(cookie_path(&inner.data_dir, &id));
 
     let mut event = None;
     let mut hash_path = None;

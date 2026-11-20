@@ -13,8 +13,9 @@ publish = false
 
 # Every dependency is a supply-chain commitment (madde 37).
 [dependencies]
-# The async runtime reqwest needs; positioned file writes run on its blocking pool.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+# The async runtime reqwest needs; positioned file writes run on its blocking pool;
+# `process` runs the helper programs (tools.rs), `io-util` reads their progress.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process", "io-util"] }
 # HTTP/1.1 and HTTP/2 with a keep-alive pool: the pool is what lets a connection that
 # finished its segment be reused for the next one (IDM's "no new connect and login").
 # rustls with the ring provider: no OpenSSL, and no C build of aws-lc.

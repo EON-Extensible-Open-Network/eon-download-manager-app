@@ -44,7 +44,7 @@ function file(name, bytes) {
   }
   return files.get(name);
 }
-const sizes = { "ubuntu-24.04-desktop-amd64.iso": 48 << 20, "s1.bin": 2 << 20, "s2.bin": 2 << 20, "s3.bin": 2 << 20, "handoff.zip": 6 << 20, "added.pdf": 3 << 20 };
+const sizes = { "ubuntu-24.04-desktop-amd64.iso": 48 << 20, "s1.bin": 2 << 20, "s2.bin": 2 << 20, "s3.bin": 2 << 20, "handoff.zip": 6 << 20, "added.pdf": 3 << 20, "cat.gif": 64 << 10 };
 const server = createServer(async (req, res) => {
   const name = decodeURIComponent(req.url.split("/").pop().split("?")[0]);
   if (!(name in sizes)) { res.writeHead(404).end(); return; }
@@ -233,6 +233,19 @@ try {
   await js(`document.querySelector('#list .row').click()`);
   await sleep(800);
   await shot("06-light-tr");
+
+  // Format: "ask" offers what a file can become; a GIF can be a still picture.
+  await js(`document.getElementById('settings-open').click()`);
+  await until(`document.getElementById('settings').open`);
+  await js(`(() => { document.getElementById('s-format').value = 'ask'; document.getElementById('settings-form').requestSubmit(); })()`);
+  await until(`!document.getElementById('settings').open`);
+  await js(`(() => { document.getElementById('add-url').value = ${JSON.stringify(`${base}/pics/cat.gif`)}; document.getElementById('add-form').requestSubmit(); })()`);
+  check("asked, the sheet offers the GIF as it is, as a still picture or a video", await until(`!document.getElementById('sheet-file').hidden && !document.getElementById('sheet-format').hidden && document.getElementById('sheet-format-select').options.length === 4`, 15000));
+  await js(`(() => { const s = document.getElementById('sheet-format-select'); s.value = 'png'; s.dispatchEvent(new Event('change')); })()`);
+  check("and choosing one renames the file to match", await until(`document.getElementById('sheet-name').value === 'cat.png'`));
+  await shot("07-format");
+  await js(`document.querySelector('#sheet-file .sheet-cancel').click()`);
+  await until(`!document.getElementById('sheet').open`);
 
   const unnamed = await js(`[...document.querySelectorAll('button, input, select, textarea')].filter(e => {
     if (e.closest('[hidden], dialog:not([open])')) return false;

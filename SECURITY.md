@@ -31,6 +31,14 @@ repository; the organisation-wide policy is
   markup built from strings, and on any plugin permission granted to the page.
 - **Video.** Only what the page itself loads; AES-128 is the only decryption, and DRM key
   systems are refused by name. Playlists are parsed, never executed.
+- **Helper programs are fetched, never bundled, and checked.** Pages that play video or
+  sound go through yt-dlp; format changes go through FFmpeg. Each is downloaded the first
+  time it is needed from its project's own GitHub release, streamed to disk while its
+  SHA-256 is computed, and kept only if that matches the checksum list the same release
+  publishes (`engine/src/tools.rs`). They live in the data folder's `tools/`, run without
+  a console window, and get the page address only after `--`, so an address can never be
+  read as an option. Cookies for a page go to them as a file for that one site, deleted
+  when the download ends. No DRM is decrypted.
 - **No telemetry, no licensing code** — CI checks for both.
 
 ## Known

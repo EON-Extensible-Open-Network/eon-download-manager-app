@@ -13,13 +13,16 @@
 
 pub mod batch;
 pub mod category;
+pub mod convert;
 pub mod hls;
 pub mod http;
 pub mod limiter;
 pub mod manager;
+pub mod media;
 pub mod name;
 pub mod plan;
 pub mod state;
+pub mod tools;
 pub mod transfer;
 
 pub use category::Category;

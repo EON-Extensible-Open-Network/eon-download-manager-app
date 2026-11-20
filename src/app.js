@@ -670,6 +670,67 @@ let sheetSource = null;
 let sheetProbe = null;
 let sheetFolder = "";
 
+// ---- what to save: quality for a page, a format when the person asked to choose --
+
+const EXT = (name) => (/\.([a-z0-9]{1,5})$/i.exec(name || "")?.[1] || "").toLowerCase();
+const VIDEO_EXT = ["mp4", "webm", "mkv", "mov", "avi", "m4v", "ts", "flv", "wmv"];
+const AUDIO_EXT = ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma"];
+const IMAGE_EXT = ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "avif"];
+
+// Each choice: what the add request carries, and the extension it gives the file.
+function formatChoices(probe, name) {
+  const ask = settings.ask_format;
+  const media = probe.media;
+  if (media) {
+    const list = [];
+    if (media.has_video) {
+      list.push({ id: "best", label: t("format.best"), media: { pick: { kind: "best" }, container: "mp4" }, ext: "mp4" });
+      for (const h of media.heights.slice(0, 6)) {
+        list.push({ id: `h${h}`, label: t("format.height", { h }), media: { pick: { kind: "height", value: h }, container: "mp4" }, ext: "mp4" });
+      }
+    }
+    if (ask || !media.has_video) {
+      if (media.has_audio) {
+        list.push({ id: "mp3", label: t("format.audio", { f: "MP3" }), media: { pick: { kind: "audio_only" }, container: "mp3" }, ext: "mp3" });
+        list.push({ id: "m4a", label: t("format.audio", { f: "M4A" }), media: { pick: { kind: "audio_only" }, container: "m4a" }, ext: "m4a" });
+      }
+      if (ask && media.has_video) {
+        list.push({ id: "mkv", label: t("format.as", { f: "MKV" }), media: { pick: { kind: "best" }, container: "mkv" }, ext: "mkv" });
+        list.push({ id: "silent", label: t("format.silent"), media: { pick: { kind: "video_only" }, container: "mp4" }, ext: "mp4" });
+      }
+    }
+    return list;
+  }
+  if (!ask || probe.hls) return [];
+  const ext = EXT(name);
+  const original = { id: "original", label: t("format.original", { f: ext.toUpperCase() || "?" }), convert: null, ext };
+  const as = (f, label) => ({ id: f, label, convert: f, ext: f });
+  if (ext === "gif") return [original, as("png", t("format.still", { f: "PNG" })), as("jpg", t("format.still", { f: "JPG" })), as("mp4", t("format.as", { f: "MP4" }))];
+  if (VIDEO_EXT.includes(ext)) {
+    return [original, ...["mp4", "mkv"].filter((f) => f !== ext).map((f) => as(f, t("format.as", { f: f.toUpperCase() }))),
+      as("mp3", t("format.audio", { f: "MP3" })), as("m4a", t("format.audio", { f: "M4A" })),
+      { id: "video_only", label: t("format.silent"), convert: "video_only", ext }];
+  }
+  if (AUDIO_EXT.includes(ext)) return [original, ...["mp3", "m4a"].filter((f) => f !== ext).map((f) => as(f, t("format.as", { f: f.toUpperCase() })))];
+  if (IMAGE_EXT.includes(ext)) return [original, ...["png", "jpg"].filter((f) => f !== ext && !(f === "jpg" && ext === "jpeg")).map((f) => as(f, t("format.as", { f: f.toUpperCase() })))];
+  return [];
+}
+
+let sheetChoices = [];
+function renderFormats(probe, name) {
+  sheetChoices = formatChoices(probe, name);
+  $("sheet-format").hidden = sheetChoices.length === 0;
+  $("sheet-format-select").replaceChildren(...sheetChoices.map((c, i) => el("option", { value: c.id, text: c.label, selected: i === 0 })));
+}
+function chosenFormat() {
+  return sheetChoices.find((c) => c.id === $("sheet-format-select").value) || null;
+}
+$("sheet-format-select").addEventListener("change", () => {
+  const c = chosenFormat();
+  const input = $("sheet-name");
+  if (c?.ext) input.value = input.value.replace(/(\.[a-z0-9]{1,5})?$/i, `.${c.ext}`);
+});
+
 function sheetShow(part) {
   for (const id of ["sheet-loading", "sheet-error", "sheet-file", "sheet-links"]) $(id).hidden = id !== part;
 }
@@ -692,7 +753,10 @@ async function addLink(source) {
     $("sheet-name").value = name;
     glyph($("sheet-glyph"), probe.category);
     const meta = [];
-    if (probe.hls) {
+    if (probe.media) {
+      if (probe.media.uploader) meta.push(el("span", { text: probe.media.uploader }));
+      if (probe.media.duration) meta.push(el("span", { text: duration(probe.media.duration) }));
+    } else if (probe.hls) {
       meta.push(el("span", { text: t("sheet.video", { time: duration(probe.hls.seconds) }) }));
     } else {
       meta.push(el("span", { text: probe.length != null ? size(probe.length) : t("sheet.size.unknown") }));
@@ -707,6 +771,7 @@ async function addLink(source) {
       const label = v.resolution ? `${v.resolution.split("x")[1]}p` : `${Math.round(v.bandwidth / 1000)} kbit/s`;
       return el("label", {}, el("input", { type: "radio", name: "variant", value: v.url, checked: i === 0 }), el("span", { text: label }));
     }));
+    renderFormats(probe, name);
     $("sheet-folder").textContent = sheetFolder;
     sheetShow("sheet-file");
     $("sheet-start").focus();
@@ -720,8 +785,9 @@ async function addLink(source) {
 async function startFromSheet(start) {
   const variant = document.querySelector('#sheet-variant-list input:checked')?.value || null;
   const name = $("sheet-name").value.trim();
+  const format = $("sheet-format").hidden ? null : chosenFormat();
   try {
-    const id = await invoke("add", { args: { source: sheetSource, probe: sheetProbe, file_name: name || null, folder: sheetFolder || null, start, variant } });
+    const id = await invoke("add", { args: { source: sheetSource, probe: sheetProbe, file_name: name || null, folder: sheetFolder || null, start, variant, media: format?.media || null, convert: format?.convert || null } });
     $("sheet").close();
     announce(t(start === "now" ? "announce.started" : "announce.later", { name: name || sheetProbe?.file_name || "" }));
     if (start === "now") { if (views.has(id)) select(id); else pendingSelect = id; }
@@ -937,6 +1003,7 @@ async function openSettings() {
   $("s-folder").textContent = s.folder || downloadsDir;
   $("s-sort").checked = s.sort_by_category;
   $("s-ignore").checked = s.engine.ignore_changes;
+  $("s-format").value = s.ask_format ? "ask" : "original";
   $("s-clipboard").checked = s.watch_clipboard;
   $("s-language").value = s.language;
   $("s-theme").value = s.theme;
@@ -1016,6 +1083,7 @@ $("settings-form").addEventListener("submit", async (e) => {
   next.engine.max_active = Number($("s-active").value);
   next.engine.speed_limit = Number($("s-limit").value);
   next.engine.ignore_changes = $("s-ignore").checked;
+  next.ask_format = $("s-format").value === "ask";
   next.folder = settingsFolder;
   next.sort_by_category = $("s-sort").checked;
   next.watch_clipboard = $("s-clipboard").checked;
