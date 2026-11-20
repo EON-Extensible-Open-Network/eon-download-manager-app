@@ -281,7 +281,8 @@ pub struct HlsJob {
     /// The media playlist.
     pub playlist: String,
     pub target: PathBuf,
-    pub connections: u32,
+    /// Read live, as in `transfer::Job`.
+    pub connections: Arc<std::sync::atomic::AtomicU32>,
     pub global: Arc<Limiter>,
     pub own: Arc<Limiter>,
 }
@@ -377,8 +378,8 @@ pub async fn run(
     let mut attempts: HashMap<usize, u32> = HashMap::new();
     let mut workers: JoinSet<(usize, Result<(), Error>)> = JoinSet::new();
     let mut last_save = Instant::now();
-    let limit = job.connections.clamp(1, 16) as usize;
     loop {
+        let limit = job.connections.load(Ordering::Relaxed).clamp(1, 16) as usize;
         while workers.len() < limit {
             let Some(i) = todo.pop() else { break };
             let piece = media.pieces[i].clone();

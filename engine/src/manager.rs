@@ -21,7 +21,7 @@ use crate::{name, plan, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -164,6 +164,10 @@ pub struct View {
     /// Seconds left at the current speed.
     pub eta: Option<u64>,
     pub connections: u32,
+    /// Connections wanted now (the download's own setting, or the global one).
+    pub max_connections: u32,
+    /// The download's own connection setting; `None` follows the global one.
+    pub own_connections: Option<u32>,
     pub lanes: Vec<Lane>,
     /// One value a second, the last 60 seconds, bytes per second.
     pub history: Vec<u64>,
@@ -205,6 +209,11 @@ pub enum Event {
 
 struct Item {
     record: Record,
+    /// Connections this download should have now: its own setting, or the
+    /// global one. Shared with the running transfer, which reads it live.
+    conn: Arc<AtomicU32>,
+    /// When it last started, to know which are newest.
+    started: u64,
     live: Arc<Live>,
     stop: Option<watch::Sender<bool>>,
     own: Arc<Limiter>,
@@ -321,6 +330,10 @@ impl Engine {
                 }
                 Item {
                     own: Arc::new(Limiter::new(record.speed_limit)),
+                    conn: Arc::new(AtomicU32::new(
+                        record.connections.unwrap_or(settings.connections),
+                    )),
+                    started: 0,
                     record,
                     live: Arc::new(Live::default()),
                     stop: None,
@@ -370,8 +383,16 @@ impl Engine {
         self.inner.settings()
     }
 
+    /// New settings take effect at once, running downloads included: the speed
+    /// limit, the connections of every download that follows the global
+    /// setting, and how many run at the same time.
     pub fn set_settings(&self, settings: Settings) {
         self.inner.global.set(settings.speed_limit);
+        for item in self.inner.items().iter() {
+            if item.record.connections.is_none() {
+                item.conn.store(settings.connections, Ordering::Relaxed);
+            }
+        }
         *self
             .inner
             .settings
@@ -476,7 +497,14 @@ impl Engine {
             speed_limit: 0,
         };
         let start_now = record.status == Status::Downloading;
+        let conn = Arc::new(AtomicU32::new(
+            record
+                .connections
+                .unwrap_or(self.inner.settings().connections),
+        ));
         self.inner.items().push(Item {
+            conn,
+            started: 0,
             record,
             live: Arc::new(Live::default()),
             stop: None,
@@ -647,6 +675,20 @@ impl Engine {
         Ok(())
     }
 
+    /// This download's own number of connections, or `None` to follow the
+    /// global setting. Applies to the running transfer at once.
+    pub fn set_connections(&self, id: &str, connections: Option<u32>) {
+        let global = self.inner.settings().connections;
+        let mut items = self.inner.items();
+        if let Some(item) = items.iter_mut().find(|i| i.record.id == id) {
+            let n = connections.map(|c| c.clamp(1, 32));
+            item.record.connections = n;
+            item.conn.store(n.unwrap_or(global), Ordering::Relaxed);
+        }
+        drop(items);
+        self.inner.changed();
+    }
+
     pub fn set_speed_limit(&self, id: &str, bytes_per_second: u64) {
         let mut items = self.inner.items();
         if let Some(item) = items.iter_mut().find(|i| i.record.id == id) {
@@ -787,6 +829,8 @@ fn view(item: &Item) -> View {
         } else {
             0
         },
+        max_connections: item.conn.load(Ordering::Relaxed),
+        own_connections: r.connections,
         lanes,
         history: item.history.iter().copied().collect(),
         resumable: r.resumable,
@@ -827,6 +871,27 @@ fn sample(inner: &Inner, record_history: bool) {
 /// Start queued downloads while there is room; say when the queue empties.
 fn schedule(inner: &Arc<Inner>) {
     let settings = inner.settings();
+    // Fewer allowed at once than are running: the newest go back to the queue,
+    // stopping after they write what they hold, and continue later from their
+    // resume state.
+    {
+        let mut items = inner.items();
+        let mut running: Vec<&mut Item> = items
+            .iter_mut()
+            .filter(|i| i.stop.is_some() && i.record.status == Status::Downloading)
+            .collect();
+        let allowed = settings.max_active.max(1) as usize;
+        if running.len() > allowed {
+            running.sort_by_key(|i| std::cmp::Reverse(i.started));
+            let excess = running.len() - allowed;
+            for item in running.into_iter().take(excess) {
+                item.record.status = Status::Queued;
+                if let Some(stop) = &item.stop {
+                    let _ = stop.send(true);
+                }
+            }
+        }
+    }
     let mut to_start = Vec::new();
     let (running, queued) = {
         let items = inner.items();
@@ -877,6 +942,7 @@ fn start(inner: &Arc<Inner>, id: &str) {
         }
         item.record.status = Status::Downloading;
         item.record.error = None;
+        item.started = now_ms();
         item.stop = Some(tx);
         item.live = Arc::new(Live::default());
         item.last_received = 0;
@@ -889,12 +955,16 @@ fn start(inner: &Arc<Inner>, id: &str) {
 async fn drive(inner: Arc<Inner>, id: String, stop: watch::Receiver<bool>) {
     let mut restarted = false;
     let result = loop {
-        let Some((mut record, live, own)) = ({
+        let Some((mut record, live, own, connections)) = ({
             let items = inner.items();
-            items
-                .iter()
-                .find(|i| i.record.id == id)
-                .map(|i| (i.record.clone(), Arc::clone(&i.live), Arc::clone(&i.own)))
+            items.iter().find(|i| i.record.id == id).map(|i| {
+                (
+                    i.record.clone(),
+                    Arc::clone(&i.live),
+                    Arc::clone(&i.own),
+                    Arc::clone(&i.conn),
+                )
+            })
         }) else {
             return;
         };
@@ -921,7 +991,6 @@ async fn drive(inner: Arc<Inner>, id: String, stop: watch::Receiver<bool>) {
                 Err(e) => break Err(e),
             }
         }
-        let connections = record.connections.unwrap_or(settings.connections);
         let outcome = match record.kind {
             Kind::File => {
                 transfer::run(
@@ -933,7 +1002,7 @@ async fn drive(inner: Arc<Inner>, id: String, stop: watch::Receiver<bool>) {
                         length: record.length,
                         resumable: record.resumable,
                         validators: record.validators.clone(),
-                        connections,
+                        connections: Arc::clone(&connections),
                         ignore_changes: settings.ignore_changes,
                         global: Arc::clone(&inner.global),
                         own,
@@ -950,7 +1019,7 @@ async fn drive(inner: Arc<Inner>, id: String, stop: watch::Receiver<bool>) {
                         source: record.source.clone(),
                         playlist: record.url.clone(),
                         target: record.path.clone(),
-                        connections,
+                        connections: Arc::clone(&connections),
                         global: Arc::clone(&inner.global),
                         own,
                     },

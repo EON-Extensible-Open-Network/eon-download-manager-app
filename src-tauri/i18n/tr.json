@@ -171,5 +171,7 @@
   "tray.quit": "Çık",
   "tray.hint.title": "İndirme sürüyor",
   "tray.hint.body": "EON Download Manager sistem tepsisinde çalışmaya devam ediyor. Oradan çıkabilirsiniz.",
-  "deck.mosaic": "Dosya, {n} parçadan birleştirildi"
+  "deck.mosaic": "Dosya, {n} parçadan birleştirildi",
+  "fact.connections": "Bağlantı",
+  "connections.auto": "Ayarlardaki gibi ({n})"
 }

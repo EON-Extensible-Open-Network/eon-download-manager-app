@@ -440,3 +440,108 @@ fn the_queue_runs_downloads_a_few_at_a_time_and_survives_a_restart() {
     assert!(peak <= 2, "at most two at a time: {peak}");
     assert_eq!(e.views().len(), ids.len());
 }
+
+#[test]
+fn connections_change_while_downloading_without_losing_a_byte() {
+    let d = dir("liveconn");
+    let length = 24 << 20;
+    let server = Server::start(Options {
+        length,
+        throttle: 1 << 20,
+        ..Options::default()
+    });
+    let e = engine(
+        &d.0,
+        Settings {
+            connections: 8,
+            ..Settings::default()
+        },
+    );
+    let id = add(
+        &e,
+        &format!("{}/file/live.bin", server.base),
+        &d.0.join("out"),
+        Start::Now,
+    );
+    wait(&e, &id, 30, |v| v.connections >= 6);
+    // Fewer: the newest connections finish what they hold and step back.
+    e.set_settings(Settings {
+        connections: 2,
+        ..Settings::default()
+    });
+    let fewer = wait(&e, &id, 20, |v| v.connections <= 2);
+    assert_eq!(fewer.max_connections, 2);
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(e.view(&id).unwrap().connections <= 2, "it stays at two");
+    // More again, for this download only.
+    e.set_connections(&id, Some(6));
+    wait(&e, &id, 20, |v| v.connections >= 5);
+    let v = done(&e, &id, 120);
+    assert_eq!(v.sha256.as_deref().unwrap(), sha256(&content(length, 1)));
+    let served = server.stats.served.load(Ordering::SeqCst);
+    assert!(
+        served < length + (6 << 20),
+        "retired connections waste little: {served}"
+    );
+}
+
+#[test]
+fn fewer_downloads_at_once_sends_the_newest_back_to_the_queue() {
+    let d = dir("liveactive");
+    let length = 6 << 20;
+    let server = Server::start(Options {
+        length,
+        throttle: 1 << 20,
+        ..Options::default()
+    });
+    let e = engine(
+        &d.0,
+        Settings {
+            max_active: 3,
+            connections: 2,
+            ..Settings::default()
+        },
+    );
+    let ids: Vec<String> = (0..3)
+        .map(|i| {
+            add(
+                &e,
+                &format!("{}/file/a{i}.bin", server.base),
+                &d.0.join("out"),
+                Start::Queue,
+            )
+        })
+        .collect();
+    let end = Instant::now() + Duration::from_secs(20);
+    while e
+        .views()
+        .iter()
+        .filter(|v| v.status == Status::Downloading)
+        .count()
+        < 3
+    {
+        assert!(Instant::now() < end);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    e.set_settings(Settings {
+        max_active: 1,
+        connections: 2,
+        ..Settings::default()
+    });
+    std::thread::sleep(Duration::from_millis(800));
+    let downloading = e
+        .views()
+        .iter()
+        .filter(|v| v.status == Status::Downloading)
+        .count();
+    assert_eq!(downloading, 1, "one at a time now");
+    for id in &ids {
+        let v = done(&e, id, 120);
+        assert_eq!(
+            v.sha256.as_deref().unwrap(),
+            sha256(&content(length, 1)),
+            "{}",
+            v.name
+        );
+    }
+}

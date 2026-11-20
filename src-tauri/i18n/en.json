@@ -171,5 +171,7 @@
   "tray.quit": "Quit",
   "tray.hint.title": "Still downloading",
   "tray.hint.body": "EON Download Manager keeps going in the tray. Quit it from there.",
-  "deck.mosaic": "The file, assembled from {n} parts"
+  "deck.mosaic": "The file, assembled from {n} parts",
+  "fact.connections": "Connections",
+  "connections.auto": "As in settings ({n})"
 }

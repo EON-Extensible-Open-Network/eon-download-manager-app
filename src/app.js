@@ -629,7 +629,7 @@ function renderDeck() {
   }
 
   const facts = $("facts");
-  const sigF = `${v.id}:${v.status}:${v.length}:${v.sha256}:${v.resumable}:${lang}:${v.speed_limit}`;
+  const sigF = `${v.id}:${v.status}:${v.length}:${v.sha256}:${v.resumable}:${lang}:${v.speed_limit}:${v.own_connections}:${settings.engine.connections}`;
   if (facts.dataset.sig !== sigF) {
     facts.dataset.sig = sigF;
     const rows = [];
@@ -640,6 +640,10 @@ function renderDeck() {
       const sel = el("select", { "aria-label": t("fact.limit"), onchange: (e) => invoke("set_speed_limit", { id: v.id, bytesPerSecond: Number(e.target.value) }) },
         ...LIMITS.map((l) => el("option", { value: String(l), text: l ? speedText(l) : t("limit.none"), selected: l === v.speed_limit })));
       fact("fact.limit", sel);
+      const conn = el("select", { "aria-label": t("fact.connections"), onchange: (e) => invoke("set_connections", { id: v.id, connections: e.target.value === "" ? null : Number(e.target.value) }) },
+        el("option", { value: "", text: t("connections.auto", { n: settings.engine.connections }), selected: v.own_connections == null }),
+        ...[1, 2, 4, 6, 8, 12, 16, 24, 32].map((n) => el("option", { value: String(n), text: String(n), selected: v.own_connections === n })));
+      fact("fact.connections", conn);
     }
     const addr = el("span", { class: "url", text: v.url });
     const copy = el("button", { type: "button", class: "ghost icon-only", "aria-label": t("fact.copy"), title: t("fact.copy"), onclick: () => navigator.clipboard.writeText(v.url).then(() => announce(t("fact.copied"))) }, icon("copy"));

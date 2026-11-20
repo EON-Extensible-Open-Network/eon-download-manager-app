@@ -18,7 +18,7 @@ use crate::state::{self, ResumeState, Validators};
 use crate::Error;
 use futures_util::StreamExt;
 use reqwest::header;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -59,7 +59,11 @@ pub struct Job {
     pub length: Option<u64>,
     pub resumable: bool,
     pub validators: Validators,
-    pub connections: u32,
+    /// How many connections this download should have. Read on every turn of
+    /// the conductor, so a change applies to the running transfer: fewer
+    /// means the newest connections finish what they hold and step back; more
+    /// means new ones open. Nothing already downloaded is lost either way.
+    pub connections: Arc<AtomicU32>,
     /// Trust a resumed file even if the server says it changed.
     pub ignore_changes: bool,
     pub global: Arc<Limiter>,
@@ -258,7 +262,13 @@ async fn segmented(
         own: Arc::clone(&job.own),
     });
 
-    let mut limit = job.connections.clamp(1, 32);
+    // What the server has shown it accepts (429/503 lower it); the person's
+    // target is read live from `job.connections`.
+    let mut learned = u32::MAX;
+    // Each connection has its own stop signal, so one can be retired alone.
+    let mut retire: HashMap<u32, watch::Sender<bool>> = HashMap::new();
+    let mut opened: Vec<(u32, u32)> = Vec::new(); // (connection, segment), oldest first
+    let mut retiring: HashSet<u32> = HashSet::new();
     let mut workers: JoinSet<(u32, End)> = JoinSet::new();
     let mut next_conn = 1u32;
     let mut next_open = Instant::now();
@@ -273,6 +283,9 @@ async fn segmented(
         tokio::select! {
             Some(joined) = workers.join_next(), if !workers.is_empty() => {
                 let (seg, end) = joined.map_err(|e| Error::Io(e.to_string()))?;
+                retire.remove(&seg);
+                retiring.remove(&seg);
+                opened.retain(|&(_, s)| s != seg);
                 live.connections.store(workers.len() as u32, Ordering::Relaxed);
                 {
                     let mut segs = live.segments();
@@ -284,13 +297,14 @@ async fn segmented(
                     End::Finished => failures = 0,
                     End::Stopped => {}
                     End::Failed(Error::Changed) => {
+                        signal(&retire);
                         stop_all(&mut workers).await;
                         return Err(Error::Changed);
                     }
                     End::Failed(Error::Busy) => {
                         // The server limits connections: settle one below where it
                         // complained (IDM's per-server exception, learnt).
-                        limit = (workers.len() as u32).max(1);
+                        learned = (workers.len() as u32).max(1);
                         cooldown.insert(seg, Instant::now() + Duration::from_secs(2));
                         failures += 1;
                         last_error = Some(Error::Busy);
@@ -303,6 +317,7 @@ async fn segmented(
                     }
                 }
                 if failures >= MAX_FAILURES {
+                    signal(&retire);
                     stop_all(&mut workers).await;
                     save(job, live, &state_file);
                     return Err(last_error.unwrap_or_else(|| Error::Network("too many failures".into())));
@@ -315,15 +330,39 @@ async fn segmented(
         }
 
         if stopping {
+            signal(&retire);
             stop_all(&mut workers).await;
             live.connections.store(0, Ordering::Relaxed);
             save(job, live, &state_file);
             return Ok(Outcome::Stopped);
         }
         if plan::complete(&live.segments()) {
+            signal(&retire);
             stop_all(&mut workers).await;
             live.connections.store(0, Ordering::Relaxed);
             break;
+        }
+        let limit = job
+            .connections
+            .load(Ordering::Relaxed)
+            .clamp(1, 32)
+            .min(learned);
+        // Fewer wanted than are working: the newest step back, after writing
+        // what they hold. Their parts go back to the plan for the others.
+        let working = workers.len().saturating_sub(retiring.len()) as u32;
+        if working > limit {
+            let mut excess = working - limit;
+            for &(_, seg) in opened.iter().rev() {
+                if excess == 0 {
+                    break;
+                }
+                if retiring.insert(seg) {
+                    if let Some(tx) = retire.get(&seg) {
+                        let _ = tx.send(true);
+                    }
+                    excess -= 1;
+                }
+            }
         }
         let now = Instant::now();
         if (workers.len() as u32) < limit && now >= next_open {
@@ -359,8 +398,10 @@ async fn segmented(
             };
             if let Some(seg) = chosen {
                 let shared = Arc::clone(&shared);
-                let stop = stop.clone();
-                workers.spawn(async move { (seg, fetch(shared, seg, stop).await) });
+                let (tx, rx) = watch::channel(false);
+                retire.insert(seg, tx);
+                opened.push((next_conn, seg));
+                workers.spawn(async move { (seg, fetch(shared, seg, rx).await) });
                 next_conn += 1;
                 next_open = now + RAMP;
                 live.connections
@@ -374,6 +415,13 @@ async fn segmented(
     }
     save(job, live, &state_file);
     Ok(Outcome::Done(job.target.clone()))
+}
+
+/// Tell every connection to finish what it holds and stop.
+fn signal(retire: &HashMap<u32, watch::Sender<bool>>) {
+    for tx in retire.values() {
+        let _ = tx.send(true);
+    }
 }
 
 fn save(job: &Job, live: &Live, path: &std::path::Path) {

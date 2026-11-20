@@ -59,6 +59,7 @@ const COMMANDS: &[&str] = &[
     "clear_finished",
     "refresh",
     "set_speed_limit",
+    "set_connections",
     "verify",
     "open_file",
     "show_in_folder",
@@ -331,6 +332,13 @@ async fn refresh(state: State<'_>, id: String, source: SourceArgs) -> Result<(),
 #[tauri::command(async)]
 fn set_speed_limit(state: State<'_>, id: String, bytes_per_second: u64) {
     state.engine.set_speed_limit(&id, bytes_per_second);
+}
+
+/// This download's own connections (`None` follows the settings), applied to
+/// the running transfer at once.
+#[tauri::command(async)]
+fn set_connections(state: State<'_>, id: String, connections: Option<u32>) {
+    state.engine.set_connections(&id, connections);
 }
 
 #[tauri::command(async)]
@@ -860,6 +868,7 @@ fn window(args: Vec<String>) {
             clear_finished,
             refresh,
             set_speed_limit,
+            set_connections,
             verify,
             open_file,
             show_in_folder,
