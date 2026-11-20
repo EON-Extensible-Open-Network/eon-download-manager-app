@@ -1,0 +1,19 @@
+EON Download Manager
+Copyright (c) 2026 EON contributors
+
+This product is licensed under GPL-3.0-or-later WITH the EON Module ABI
+Exception 1.0 (see LICENSE and LICENSE-EXCEPTION.md).
+
+Third-party components (direct dependencies; full inventory: cargo deny check licenses)
+
+  tauri / tauri-build and its plugins (single-instance, notification, dialog, opener)
+                           MIT OR Apache-2.0
+  tokio, reqwest, futures-util, serde, serde_json, url, percent-encoding
+                           MIT OR Apache-2.0 (tokio: MIT)
+  rustls (ring provider)   Apache-2.0 OR ISC OR MIT
+  sha2, aes, cbc           MIT OR Apache-2.0
+  arboard                  MIT OR Apache-2.0
+  winreg (Windows)         MIT
+  Geist (font)             SIL Open Font License 1.1 -- LICENSES/OFL-1.1.txt
+  Lucide (icons)           ISC -- LICENSES/ISC.txt
+  The system webview (WebView2, WebKitGTK, WKWebView) is the platform's and is not shipped.

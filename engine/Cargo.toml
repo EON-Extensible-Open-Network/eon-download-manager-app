@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 EON contributors
+
+[package]
+name = "eon-dm-engine"
+description = "The EON Download Manager engine: dynamic segmentation, resume after anything, speed limits, HLS. No GUI dependency."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# Every dependency is a supply-chain commitment (madde 37).
+[dependencies]
+# The async runtime reqwest needs; positioned file writes run on its blocking pool.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+# HTTP/1.1 and HTTP/2 with a keep-alive pool: the pool is what lets a connection that
+# finished its segment be reused for the next one (IDM's "no new connect and login").
+# rustls with the ring provider: no OpenSSL, and no C build of aws-lc.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream", "http2", "system-proxy", "charset"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Resolving relative playlist and redirect addresses.
+url = "2"
+# RFC 5987 file names (filename*=UTF-8''...).
+percent-encoding = "2"
+# The SHA-256 shown on completion and compared with one the person pastes.
+sha2 = "0.10"
+# HLS AES-128 (CBC, PKCS#7), the only encryption HLS without DRM uses.
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,57 @@
+{
+  "name": {
+    "message": "EON Download Manager"
+  },
+  "description": {
+    "message": "Hands your downloads and the videos a page plays to EON Download Manager: faster, resumable, free."
+  },
+  "menu_link": {
+    "message": "Download with EON"
+  },
+  "menu_all": {
+    "message": "Download all links with EON"
+  },
+  "menu_selection": {
+    "message": "Download the selected links with EON"
+  },
+  "pill": {
+    "message": "Download video"
+  },
+  "pill_many": {
+    "message": "Download video ($N$)",
+    "placeholders": {
+      "n": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_on": {
+    "message": "Catch downloads"
+  },
+  "popup_connected": {
+    "message": "Connected to EON Download Manager $V$",
+    "placeholders": {
+      "v": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_missing": {
+    "message": "EON Download Manager isn't installed or connected. Open it, go to Settings and press Connect browsers."
+  },
+  "popup_media": {
+    "message": "Video on this page"
+  },
+  "popup_none": {
+    "message": "No video found on this page yet. Start playing it."
+  },
+  "popup_alt": {
+    "message": "Hold Alt while clicking to let the browser download it instead."
+  },
+  "handed": {
+    "message": "Sent to EON Download Manager"
+  },
+  "fallback": {
+    "message": "EON Download Manager didn't answer; the browser is downloading it."
+  }
+}

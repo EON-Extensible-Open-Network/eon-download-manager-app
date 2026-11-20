@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 EON contributors
+#
+# EON Download Manager. `engine/` is the download engine, a library with no GUI
+# dependency (as eon-stream-core is). `src-tauri/` is the window over it, `src/`
+# the interface (static HTML, CSS, JavaScript; no Node, no bundler), `extension/`
+# the browser extension.
+[workspace]
+members = ["engine", "src-tauri"]
+resolver = "2"
+
+[workspace.package]
+# Tag v0.0.0 -> 0.0.0-alpha. src-tauri/tauri.conf.json carries 0.0.0 (the Windows
+# resource needs three numbers); CI fails the build if the two disagree.
+version = "0.0.0-alpha"
+edition = "2021"
+rust-version = "1.98"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/EON-Extensible-Open-Network/eon-download-manager-app"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+# Tauri commands take their arguments by value; that is the shape it calls.
+needless_pass_by_value = "allow"
+
+[profile.release]
+strip = true
+opt-level = 3
+lto = true
+codegen-units = 1

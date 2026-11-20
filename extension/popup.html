@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 EON contributors
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>EON Download Manager</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon-32.png" alt="" width="22" height="22">
+    <h1 data-m="name">EON Download Manager</h1>
+  </header>
+  <p id="status" class="status" role="status"></p>
+  <div class="check">
+    <input type="checkbox" id="enabled">
+    <label for="enabled" data-m="popup_on">Catch downloads</label>
+  </div>
+  <section>
+    <h2 data-m="popup_media">Video on this page</h2>
+    <ul id="media"></ul>
+  </section>
+  <p class="hint" data-m="popup_alt"></p>
+  <script src="popup.js"></script>
+</body>
+</html>

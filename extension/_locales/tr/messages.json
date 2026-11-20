@@ -1,0 +1,57 @@
+{
+  "name": {
+    "message": "EON Download Manager"
+  },
+  "description": {
+    "message": "İndirmelerinizi ve sayfanın oynattığı videoları EON Download Manager'a aktarır: daha hızlı, sürdürülebilir, ücretsiz."
+  },
+  "menu_link": {
+    "message": "EON ile indir"
+  },
+  "menu_all": {
+    "message": "Tüm bağlantıları EON ile indir"
+  },
+  "menu_selection": {
+    "message": "Seçili bağlantıları EON ile indir"
+  },
+  "pill": {
+    "message": "Videoyu indir"
+  },
+  "pill_many": {
+    "message": "Videoyu indir ($N$)",
+    "placeholders": {
+      "n": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_on": {
+    "message": "İndirmeleri yakala"
+  },
+  "popup_connected": {
+    "message": "EON Download Manager $V$ ile bağlı",
+    "placeholders": {
+      "v": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_missing": {
+    "message": "EON Download Manager kurulu ya da bağlı değil. Uygulamayı açın, Ayarlar'a gidin ve Tarayıcıları bağla'ya basın."
+  },
+  "popup_media": {
+    "message": "Bu sayfadaki video"
+  },
+  "popup_none": {
+    "message": "Bu sayfada henüz video bulunamadı. Oynatmayı başlatın."
+  },
+  "popup_alt": {
+    "message": "Tarayıcının indirmesini istiyorsanız tıklarken Alt tuşunu basılı tutun."
+  },
+  "handed": {
+    "message": "EON Download Manager'a gönderildi"
+  },
+  "fallback": {
+    "message": "EON Download Manager yanıt vermedi; indirmeyi tarayıcı yapıyor."
+  }
+}
