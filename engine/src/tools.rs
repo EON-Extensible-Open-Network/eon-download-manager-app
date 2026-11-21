@@ -260,6 +260,11 @@ pub fn command(program: &Path) -> tokio::process::Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd.stdin(std::process::Stdio::null());
+    // The extractor is Python: without these it writes in the console's code
+    // page (cp1254 on a Turkish Windows), and a title with "ğ" in it can no
+    // longer be read back as text.
+    cmd.env("PYTHONIOENCODING", "utf-8");
+    cmd.env("PYTHONUTF8", "1");
     cmd.kill_on_drop(true);
     cmd
 }

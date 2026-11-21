@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "eon-dm-engine"
-version = "0.0.2-alpha"
+version = "0.0.3-alpha"
 dependencies = [
  "aes",
  "cbc",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "eon-download-manager"
-version = "0.0.2-alpha"
+version = "0.0.3-alpha"
 dependencies = [
  "arboard",
  "eon-dm-engine",

@@ -5,6 +5,39 @@ SPDX-FileCopyrightText: 2026 EON contributors
 
 # Changelog
 
+## v0.0.3 — 22 November 2026
+
+**Video caught on a page comes with its sound.** Large video sites send the picture and
+the sound as two separate playlists. The *Download video* button downloaded only the
+picture, so the file was silent. Now both are downloaded and joined into one file without
+re-encoding. Each half resumes on its own.
+
+**With sound or without is always asked.** For a video the add sheet always offers
+picture and sound, picture only, and sound only (M4A, or MP3 for a page). Before, the
+last two appeared only with *Ask for the format* turned on, and never for a caught video.
+The first choice now says "picture and sound".
+
+**A caught video goes through its page when the page is known.** If the page that played
+it is one the extractor knows, the page is used, with its title, every quality and the
+sound. Otherwise the caught stream is used and named after the tab's title, not `index`.
+
+**Names with Turkish letters no longer fail a finished download.** The extractor reported
+the finished file's name in the console's code page. A name with "ğ" or "ş" could not be
+read, the download that had in fact finished was marked failed, and the reason was shown
+as a full disk. The extractor now writes UTF-8. If the name it reports is not on disk, the
+file is found by the name chosen in the sheet. Downloads marked failed this way finish
+when retried: the file is already complete.
+
+**MP4 gets AAC sound.** A video saved as MP4 or as M4A sound now takes the AAC sound
+track where the page offers one. The system players of Windows play AAC, and they play
+many Opus tracks in MP4 as silence.
+
+Checked against the real network: a 19-second video downloaded under a name with
+Turkish letters, with AAC sound. A short-video page with a Turkish title downloaded whole
+and as MP3. A video playlist with its sound apart, built with FFmpeg and served locally,
+downloaded as picture and sound, picture only and sound only, with nothing half-made left
+over. The 30 window checks pass.
+
 ## v0.0.2 — 22 November 2026
 
 **Firefox hands downloads over.** In Firefox the extension caught a download, cancelled

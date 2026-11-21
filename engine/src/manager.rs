@@ -72,12 +72,17 @@ struct Record {
     connections: Option<u32>,
     #[serde(default)]
     speed_limit: u64,
-    /// A page: what to keep from it.
+    /// A page: what to keep from it. A video playlist: picture and sound,
+    /// picture only or sound only.
     #[serde(default)]
     media: Option<MediaSpec>,
     /// Save the finished file in this format (`mp4`, `mp3`, `png`, ...).
     #[serde(default)]
     convert: Option<String>,
+    /// A video playlist whose sound is apart: the sound playlist, downloaded
+    /// too and joined with the picture.
+    #[serde(default)]
+    audio: Option<String>,
 }
 
 /// What the engine is told by the front end's settings.
@@ -515,6 +520,23 @@ impl Engine {
                 container: None,
             })
         });
+        // A video playlist whose sound is apart: keep both, or the one asked for.
+        let (fetch, audio, media) = if kind == Kind::Hls {
+            let hls = probe.and_then(|p| p.hls.as_ref());
+            let sound = hls.and_then(|h| {
+                h.variants
+                    .iter()
+                    .find(|v| v.url == fetch)
+                    .map_or_else(|| h.audio.clone(), |v| v.audio.clone())
+            });
+            match (req.media.as_ref().map(|m| &m.pick), sound) {
+                (Some(Pick::AudioOnly), Some(sound)) => (sound, None, req.media.clone()),
+                (Some(Pick::VideoOnly), _) => (fetch, None, req.media.clone()),
+                (_, sound) => (fetch, sound, req.media.clone()),
+            }
+        } else {
+            (fetch, None, media)
+        };
         let convert = req
             .convert
             .clone()
@@ -545,6 +567,7 @@ impl Engine {
             speed_limit: 0,
             media,
             convert,
+            audio,
         };
         let start_now = record.status == Status::Downloading;
         let conn = Arc::new(AtomicU32::new(
@@ -856,6 +879,62 @@ async fn media_probe(
         media: Some(info),
         validators: Validators::default(),
     })
+}
+
+/// A video playlist: the picture, and when its sound is apart, the sound too,
+/// joined into one file. Each half resumes on its own; a half that finished
+/// on an earlier run is not downloaded again.
+async fn run_hls(
+    inner: &Arc<Inner>,
+    record: &Record,
+    connections: &Arc<AtomicU32>,
+    own: Arc<Limiter>,
+    live: Arc<Live>,
+    stop: watch::Receiver<bool>,
+) -> Result<Outcome, Error> {
+    let job = |playlist: &str, target: PathBuf| hls::HlsJob {
+        client: inner.client.clone(),
+        source: record.source.clone(),
+        playlist: playlist.to_owned(),
+        target,
+        connections: Arc::clone(connections),
+        global: Arc::clone(&inner.global),
+        own: Arc::clone(&own),
+    };
+    let Some(sound) = record.audio.as_deref() else {
+        return hls::run(job(&record.url, record.path.clone()), live, stop).await;
+    };
+    let half = |what: &str| {
+        let stem = record
+            .path
+            .file_stem()
+            .map_or_else(|| "video".to_owned(), |s| s.to_string_lossy().into_owned());
+        record.path.with_file_name(format!("{stem}.eon-{what}"))
+    };
+    let finished =
+        |p: &Path| p.exists() && !state::state_path(p).exists() && !state::pieces_dir(p).exists();
+    let (picture, voice) = (half("picture"), half("sound"));
+    for (playlist, target) in [(record.url.as_str(), &picture), (sound, &voice)] {
+        if finished(target) {
+            continue;
+        }
+        match hls::run(
+            job(playlist, target.clone()),
+            Arc::clone(&live),
+            stop.clone(),
+        )
+        .await?
+        {
+            Outcome::Done(_) => {}
+            other @ Outcome::Stopped => return Ok(other),
+        }
+    }
+    let ffmpeg = tools::ffmpeg(&inner.client, &inner.data_dir).await?;
+    let joined = convert::join(&ffmpeg, &picture, &voice, &record.path).await?;
+    let _ = std::fs::remove_file(&picture);
+    let _ = std::fs::remove_file(&voice);
+    let _ = std::fs::remove_file(state::part_path(&record.path));
+    Ok(Outcome::Done(joined))
 }
 
 async fn run_media(
@@ -1185,22 +1264,7 @@ async fn drive(inner: Arc<Inner>, id: String, stop: watch::Receiver<bool>) {
                 .await
             }
             Kind::Media => run_media(&inner, &record, live, stop.clone()).await,
-            Kind::Hls => {
-                hls::run(
-                    hls::HlsJob {
-                        client: inner.client.clone(),
-                        source: record.source.clone(),
-                        playlist: record.url.clone(),
-                        target: record.path.clone(),
-                        connections: Arc::clone(&connections),
-                        global: Arc::clone(&inner.global),
-                        own,
-                    },
-                    live,
-                    stop.clone(),
-                )
-                .await
-            }
+            Kind::Hls => run_hls(&inner, &record, &connections, own, live, stop.clone()).await,
         };
         match outcome {
             Err(Error::Changed) if !restarted => {

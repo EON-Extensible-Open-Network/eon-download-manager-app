@@ -7,7 +7,9 @@
 //! HLS: the `.m3u8` playlists most web video is delivered as (RFC 8216).
 //!
 //! A master playlist lists versions (resolution, bitrate); a media playlist
-//! lists the pieces. Pieces download in parallel into a folder, AES-128 is
+//! lists the pieces. A version may carry no sound of its own and name a
+//! separate sound playlist instead (`#EXT-X-MEDIA:TYPE=AUDIO`): then both are
+//! downloaded and joined. Pieces download in parallel into a folder, AES-128 is
 //! decrypted, and the pieces are joined in order at the end. Live streams and
 //! anything with DRM (`SAMPLE-AES`, a key format other than plain AES) are
 //! refused with a reason — EON downloads what the page plays in the open.
@@ -34,6 +36,9 @@ pub struct Variant {
     pub url: String,
     pub bandwidth: u64,
     pub resolution: Option<String>,
+    /// The separate sound playlist this version plays with, if it has one.
+    #[serde(default)]
+    pub audio: Option<String>,
 }
 
 impl Variant {
@@ -112,7 +117,26 @@ fn iv(text: &str) -> Option<[u8; 16]> {
     Some(out)
 }
 
+/// A separate sound playlist (`#EXT-X-MEDIA:TYPE=AUDIO,URI=...`): its group,
+/// how much the playlist prefers it (0 = the default), and its address.
+fn sound_playlist(text: &str) -> Option<(String, u8, String)> {
+    let a = attributes(text);
+    if a.get("TYPE").map(String::as_str) != Some("AUDIO") {
+        return None;
+    }
+    let yes = |k: &str| a.get(k).is_some_and(|v| v == "YES");
+    let rank = if yes("DEFAULT") {
+        0
+    } else if yes("AUTOSELECT") {
+        1
+    } else {
+        2
+    };
+    Some((a.get("GROUP-ID")?.clone(), rank, a.get("URI")?.clone()))
+}
+
 /// Read a playlist. Relative addresses resolve against `base`.
+#[allow(clippy::too_many_lines)] // one pass over the lines, one branch per tag
 pub fn parse(text: &str, base: &Url) -> Result<Playlist, Error> {
     let resolve = |u: &str| {
         base.join(u.trim())
@@ -124,7 +148,10 @@ pub fn parse(text: &str, base: &Url) -> Result<Playlist, Error> {
         return Err(Error::Invalid("not an HLS playlist".into()));
     }
     let mut variants = Vec::new();
-    let mut pending_variant: Option<(u64, Option<String>)> = None;
+    let mut pending_variant: Option<(u64, Option<String>, Option<String>)> = None;
+    // Sound playlists by group: (preferred, address).
+    let mut audio_groups: HashMap<String, Vec<(u8, String)>> = HashMap::new();
+    let mut variant_groups: Vec<Option<String>> = Vec::new();
     let mut pieces = Vec::new();
     let mut duration = None;
     let mut key: Option<Key> = None;
@@ -135,7 +162,18 @@ pub fn parse(text: &str, base: &Url) -> Result<Playlist, Error> {
         if let Some(rest) = line.strip_prefix("#EXT-X-STREAM-INF:") {
             let a = attributes(rest);
             let bandwidth = a.get("BANDWIDTH").and_then(|b| b.parse().ok()).unwrap_or(0);
-            pending_variant = Some((bandwidth, a.get("RESOLUTION").cloned()));
+            pending_variant = Some((
+                bandwidth,
+                a.get("RESOLUTION").cloned(),
+                a.get("AUDIO").cloned(),
+            ));
+        } else if let Some(rest) = line.strip_prefix("#EXT-X-MEDIA:") {
+            if let Some((group, rank, uri)) = sound_playlist(rest) {
+                audio_groups
+                    .entry(group)
+                    .or_default()
+                    .push((rank, resolve(&uri)?));
+            }
         } else if let Some(rest) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
             sequence = rest.trim().parse().unwrap_or(0);
         } else if let Some(rest) = line.strip_prefix("#EXTINF:") {
@@ -178,12 +216,14 @@ pub fn parse(text: &str, base: &Url) -> Result<Playlist, Error> {
             ended = true;
         } else if line.starts_with('#') {
             // Other tags do not change what is downloaded.
-        } else if let Some((bandwidth, resolution)) = pending_variant.take() {
+        } else if let Some((bandwidth, resolution, group)) = pending_variant.take() {
             variants.push(Variant {
                 url: resolve(line)?,
                 bandwidth,
                 resolution,
+                audio: None,
             });
+            variant_groups.push(group);
         } else {
             pieces.push(Piece {
                 url: resolve(line)?,
@@ -195,6 +235,12 @@ pub fn parse(text: &str, base: &Url) -> Result<Playlist, Error> {
         }
     }
     if !variants.is_empty() {
+        for (v, group) in variants.iter_mut().zip(variant_groups) {
+            v.audio = group
+                .and_then(|g| audio_groups.get(&g))
+                .and_then(|list| list.iter().min_by_key(|(rank, _)| *rank))
+                .map(|(_, uri)| uri.clone());
+        }
         variants.sort_by_key(|v| std::cmp::Reverse(v.bandwidth));
         return Ok(Playlist::Master(variants));
     }
@@ -239,6 +285,9 @@ pub struct Inspection {
     pub seconds: f64,
     /// fMP4 pieces: the result is `.mp4`, not `.ts`.
     pub mp4: bool,
+    /// The best version's separate sound playlist, when its sound is apart.
+    #[serde(default)]
+    pub audio: Option<String>,
 }
 
 pub async fn inspect(
@@ -255,6 +304,7 @@ pub async fn inspect(
                 .url
                 .clone();
             let mut inner = Box::pin(inspect(client, source, &best)).await?;
+            inner.audio = variants.first().and_then(|v| v.audio.clone());
             inner.variants = variants;
             Ok(inner)
         }
@@ -270,6 +320,7 @@ pub async fn inspect(
                 pieces: media.pieces.len(),
                 seconds: media.pieces.iter().map(|p| p.duration).sum(),
                 mp4: media.map.is_some(),
+                audio: None,
             })
         }
     }
@@ -526,6 +577,32 @@ mod tests {
         };
         assert_eq!(v[0].label(), "1080p");
         assert_eq!(v[1].url, "https://cdn.example.org/v/360p/index.m3u8");
+    }
+
+    #[test]
+    fn a_version_whose_sound_is_apart_names_its_sound_playlist() {
+        // The shape large video sites use: every version silent, sound in groups.
+        let text = "#EXTM3U\n\
+            #EXT-X-MEDIA:URI=\"a/low.m3u8\",TYPE=AUDIO,GROUP-ID=\"233\",NAME=\"Default\",AUTOSELECT=YES\n\
+            #EXT-X-MEDIA:URI=\"a/high.m3u8\",TYPE=AUDIO,GROUP-ID=\"234\",NAME=\"Default\",DEFAULT=YES,AUTOSELECT=YES\n\
+            #EXT-X-MEDIA:URI=\"a/other.m3u8\",TYPE=AUDIO,GROUP-ID=\"234\",NAME=\"Other\"\n\
+            #EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=640x360,AUDIO=\"233\"\nv/360.m3u8\n\
+            #EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=3840x2160,AUDIO=\"234\"\nv/2160.m3u8\n\
+            #EXT-X-STREAM-INF:BANDWIDTH=100000,RESOLUTION=256x144\nv/144.m3u8\n";
+        let Playlist::Master(v) = parse(text, &base()).unwrap() else {
+            panic!("not a master")
+        };
+        assert_eq!(v[0].label(), "2160p");
+        assert_eq!(
+            v[0].audio.as_deref(),
+            Some("https://cdn.example.org/v/a/high.m3u8"),
+            "the default of its group"
+        );
+        assert_eq!(
+            v[1].audio.as_deref(),
+            Some("https://cdn.example.org/v/a/low.m3u8")
+        );
+        assert_eq!(v[2].audio, None, "sound inside the version itself");
     }
 
     #[test]

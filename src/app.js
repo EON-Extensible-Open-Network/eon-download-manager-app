@@ -689,19 +689,35 @@ function formatChoices(probe, name) {
         list.push({ id: `h${h}`, label: t("format.height", { h }), media: { pick: { kind: "height", value: h }, container: "mp4" }, ext: "mp4" });
       }
     }
-    if (ask || !media.has_video) {
-      if (media.has_audio) {
-        list.push({ id: "mp3", label: t("format.audio", { f: "MP3" }), media: { pick: { kind: "audio_only" }, container: "mp3" }, ext: "mp3" });
-        list.push({ id: "m4a", label: t("format.audio", { f: "M4A" }), media: { pick: { kind: "audio_only" }, container: "m4a" }, ext: "m4a" });
-      }
-      if (ask && media.has_video) {
-        list.push({ id: "mkv", label: t("format.as", { f: "MKV" }), media: { pick: { kind: "best" }, container: "mkv" }, ext: "mkv" });
-        list.push({ id: "silent", label: t("format.silent"), media: { pick: { kind: "video_only" }, container: "mp4" }, ext: "mp4" });
-      }
+    // With sound or without is always asked; "ask formats" adds the rest.
+    if (media.has_audio) {
+      list.push({ id: "mp3", label: t("format.audio", { f: "MP3" }), media: { pick: { kind: "audio_only" }, container: "mp3" }, ext: "mp3" });
+      list.push({ id: "m4a", label: t("format.audio", { f: "M4A" }), media: { pick: { kind: "audio_only" }, container: "m4a" }, ext: "m4a" });
+    }
+    if (media.has_video) {
+      list.push({ id: "silent", label: t("format.silent"), media: { pick: { kind: "video_only" }, container: "mp4" }, ext: "mp4" });
+      if (ask) list.push({ id: "mkv", label: t("format.as", { f: "MKV" }), media: { pick: { kind: "best" }, container: "mkv" }, ext: "mkv" });
     }
     return list;
   }
-  if (!ask || probe.hls) return [];
+  if (probe.hls) {
+    const ext = EXT(name) || "mp4";
+    // Sound in a playlist of its own: download it with the picture, or alone.
+    if (probe.hls.audio) {
+      return [
+        { id: "both", label: t("format.with.sound"), media: { pick: { kind: "best" } }, ext },
+        { id: "silent", label: t("format.silent"), media: { pick: { kind: "video_only" } }, ext },
+        { id: "m4a", label: t("format.audio", { f: "M4A" }), media: { pick: { kind: "audio_only" } }, ext: "m4a" },
+      ];
+    }
+    return [
+      { id: "both", label: t("format.with.sound"), convert: null, ext },
+      { id: "silent", label: t("format.silent"), convert: "video_only", ext },
+      { id: "m4a", label: t("format.audio", { f: "M4A" }), convert: "m4a", ext: "m4a" },
+      { id: "mp3", label: t("format.audio", { f: "MP3" }), convert: "mp3", ext: "mp3" },
+    ];
+  }
+  if (!ask) return [];
   const ext = EXT(name);
   const original = { id: "original", label: t("format.original", { f: ext.toUpperCase() || "?" }), convert: null, ext };
   const as = (f, label) => ({ id: f, label, convert: f, ext: f });
@@ -740,16 +756,32 @@ function openSheet() {
   if (!d.open) d.showModal();
 }
 
-async function addLink(source) {
-  sheetSource = source;
+// `stream`: a video the browser caught on the page `source`. The page is tried
+// first: where the extractor knows the site it gives the title, every quality
+// and the sound. Otherwise the caught stream is used, named after the page.
+async function probeWithFallback(source, stream) {
+  if (stream) {
+    try {
+      const page = await invoke("probe", { source });
+      if (page.media && !page.media.generic) return { source, probe: page };
+    } catch { /* the stream itself, below */ }
+    return { source: stream.source, probe: await invoke("probe", { source: stream.source }), title: stream.title };
+  }
+  return { source, probe: await invoke("probe", { source }) };
+}
+
+async function addLink(first, stream = null) {
+  sheetSource = stream ? stream.source : first;
   sheetProbe = null;
   sheetShow("sheet-loading");
   openSheet();
   try {
-    const probe = await invoke("probe", { source });
+    const { source, probe, title } = await probeWithFallback(first, stream);
+    sheetSource = source;
     sheetProbe = probe;
     sheetFolder = probe.folder;
-    const name = source.file_name || probe.file_name;
+    const named = title ? `${title}.${EXT(probe.file_name) || "mp4"}` : null;
+    const name = source.file_name || named || probe.file_name;
     $("sheet-name").value = name;
     glyph($("sheet-glyph"), probe.category);
     const meta = [];
@@ -899,7 +931,21 @@ function nextHandoff() {
   if (!h) return;
   if (h.kind === "links" && h.items.length > 1) { openLinks(h.items); return; }
   const it = h.items[0];
-  addLink({ url: it.url, referrer: it.referrer || null, cookies: it.cookies || null, user_agent: it.user_agent || null, file_name: it.file_name || null });
+  const caught = { url: it.url, referrer: it.referrer || null, cookies: it.cookies || null, user_agent: it.user_agent || null, file_name: it.file_name || null };
+  if (h.kind === "media" && /^https?:\/\//i.test(it.referrer || "")) {
+    // The page's own cookies are not handed over (only the stream's), so the
+    // page is asked without any.
+    const page = { url: it.referrer, referrer: null, cookies: null, user_agent: it.user_agent || null, file_name: null };
+    addLink(page, { source: caught, title: pageTitle(it.page_title) });
+    return;
+  }
+  addLink(caught);
+}
+
+// A tab's title as a file name: without the unread count some sites put in front.
+function pageTitle(text) {
+  const title = (text || "").replace(/^\(\d+\)\s*/, "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+  return title ? title.slice(0, 150) : null;
 }
 listen("handoff", takeHandoffs);
 listen("refreshed", ({ payload }) => toast({ title: payload.ok ? t("refresh.done") : t("refresh.failed"), body: views.get(payload.id)?.name || "", kind: "other" }));

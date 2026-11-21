@@ -31,6 +31,11 @@ pub struct MediaInfo {
     pub has_video: bool,
     pub has_audio: bool,
     pub page: String,
+    /// Found by the extractor's general-purpose reader rather than one that
+    /// knows the site: the page may hold several videos, and this one is only
+    /// a guess.
+    #[serde(default)]
+    pub generic: bool,
 }
 
 /// What to keep.
@@ -152,6 +157,7 @@ pub async fn inspect(ytdlp: &Path, url: &str, cookies: Option<&Path>) -> Result<
         has_video: has("vcodec"),
         has_audio: has("acodec"),
         page: v["webpage_url"].as_str().unwrap_or(url).to_owned(),
+        generic: v["extractor_key"].as_str().is_none_or(|k| k == "Generic"),
     })
 }
 
@@ -171,6 +177,9 @@ pub struct MediaJob {
 pub fn arguments(job: &MediaJob) -> Vec<String> {
     let mut a: Vec<String> = [
         "--no-playlist", "--newline", "--no-warnings", "--no-mtime", "--continue", "--progress",
+        // Its output in UTF-8 whatever the console's code page: the finished
+        // file's name comes back through it.
+        "--encoding", "utf-8",
         "--progress-template", "download:EONP %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s",
         "--print", "after_move:EONF %(filepath)s", "--no-simulate",
     ]
@@ -184,6 +193,16 @@ pub fn arguments(job: &MediaJob) -> Vec<String> {
     a.push(job.connections.clamp(1, 16).to_string());
     a.push("-P".into());
     a.push(job.folder.to_string_lossy().into_owned());
+    // MP4 and M4A take AAC sound: the system players of Windows play it, and
+    // many of them play Opus in MP4 as silence.
+    if job
+        .spec
+        .container
+        .as_deref()
+        .is_none_or(|c| c == "mp4" || c == "m4a")
+    {
+        a.extend(["-S".into(), "acodec:aac".into()]);
+    }
     match &job.spec.pick {
         Pick::Best => a.extend(["-f".into(), "bv*+ba/b".into()]),
         Pick::Height(h) => a.extend(["-f".into(), format!("bv*[height<={h}]+ba/b[height<={h}]")]),
@@ -231,6 +250,21 @@ pub fn arguments(job: &MediaJob) -> Vec<String> {
     a
 }
 
+/// The file the extractor made for `stem`, found by its name when the name it
+/// reported cannot be trusted: the newest `stem.<ext>` in `folder`.
+fn made_by(folder: &Path, stem: &str) -> Option<PathBuf> {
+    std::fs::read_dir(folder)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_stem().is_some_and(|s| s.to_string_lossy() == stem)
+                && p.extension()
+                    .is_some_and(|e| !["part", "ytdl", "temp"].contains(&&*e.to_string_lossy()))
+        })
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+}
+
 #[cfg(windows)]
 async fn kill_tree(child: &mut tokio::process::Child) {
     // The extractor starts a child of its own; end the whole tree.
@@ -276,7 +310,8 @@ pub async fn run(
         let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr, &mut s).await;
         s
     });
-    let mut reader = BufReader::new(stdout).lines();
+    // Read as bytes: a line that is not valid UTF-8 must not end the download.
+    let mut reader = BufReader::new(stdout).split(b'\n');
     let mut finished: Option<PathBuf> = None;
     // Video and sound may come as two downloads: count what is done before.
     let (mut prior_files, mut file_done, mut file_total) = (0u64, 0u64, 0u64);
@@ -284,7 +319,9 @@ pub async fn run(
         .store(job.connections.clamp(1, 16), Ordering::Relaxed);
     loop {
         let got = tokio::select! {
-            next = reader.next_line() => next.map_err(|e| Error::Io(e.to_string()))?,
+            next = reader.next_segment() => next
+                .map_err(|e| Error::Network(e.to_string()))?
+                .map(|b| String::from_utf8_lossy(&b).trim_end_matches('\r').to_owned()),
             _ = stop.changed() => {
                 kill_tree(&mut child).await;
                 live.connections.store(0, Ordering::Relaxed);
@@ -330,6 +367,8 @@ pub async fn run(
         return Err(Error::Network(last_error(&errors)));
     }
     let path = finished
+        .filter(|p| p.exists())
+        .or_else(|| made_by(&job.folder, &job.stem))
         .ok_or_else(|| Error::Io("the extractor did not say where the file went".into()))?;
     let size = std::fs::metadata(&path).map_or(0, |m| m.len());
     *live.segments() = vec![Segment {
@@ -389,6 +428,12 @@ mod tests {
                     .any(|w| w[0] == "--audio-format" && w[1] == "mp3")
         );
         assert!(!audio.contains(&"--merge-output-format".to_owned()));
+        assert!(
+            a.windows(2).any(|w| w[0] == "-S" && w[1] == "acodec:aac"),
+            "MP4 takes AAC sound"
+        );
+        let mkv = arguments(&job(Pick::Best, Some("mkv")));
+        assert!(!mkv.contains(&"-S".to_owned()), "MKV keeps the best sound");
         let silent = arguments(&job(Pick::VideoOnly, None));
         assert!(silent
             .windows(2)

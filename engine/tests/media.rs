@@ -156,3 +156,256 @@ fn a_page_downloads_whole_and_as_sound_alone() {
     drop(engine);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// Serve a folder over HTTP on loopback, one thread per request.
+fn serve(root: PathBuf) -> String {
+    use std::io::{BufRead, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let root = root.clone();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                if reader.read_line(&mut request).is_err() {
+                    return;
+                }
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                        break;
+                    }
+                }
+                let mut parts = request.split_whitespace();
+                let method = parts.next().unwrap_or_default().to_owned();
+                let path = parts.next().unwrap_or("/").split('?').next().unwrap_or("/");
+                let file = root.join(path.trim_start_matches('/'));
+                let mut out = stream;
+                match std::fs::read(&file) {
+                    Ok(body) => {
+                        let kind = if Path::new(path)
+                            .extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case("m3u8"))
+                        {
+                            "application/vnd.apple.mpegurl"
+                        } else {
+                            "application/octet-stream"
+                        };
+                        let _ = write!(
+                            out,
+                            "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        if method != "HEAD" {
+                            let _ = out.write_all(&body);
+                        }
+                    }
+                    Err(_) => {
+                        let _ = out.write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                }
+            });
+        }
+    });
+    base
+}
+
+/// The streams a file holds, as the converter reports them ("Video", "Audio").
+fn streams(ffmpeg: &Path, file: &Path) -> Vec<String> {
+    let out = std::process::Command::new(ffmpeg)
+        .args(["-hide_banner", "-i"])
+        .arg(file)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| l.trim_start().starts_with("Stream #"))
+        .filter_map(|l| l.split_once(": ").map(|(_, rest)| rest.to_owned()))
+        .collect()
+}
+
+#[test]
+#[ignore = "network: fetches the converter"]
+#[allow(clippy::too_many_lines)] // build a site, serve it, download it three ways
+fn a_video_playlist_with_its_sound_apart_keeps_the_sound() {
+    // The shape large video sites play: every version silent, the sound a
+    // separate playlist. Built here with the converter, served on loopback.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let client = {
+        let _guard = rt.enter();
+        http::client().unwrap()
+    };
+    let ffmpeg = rt.block_on(tools::ffmpeg(&client, &data_dir())).unwrap();
+    let site = out_dir("hls-site");
+    for (folder, input) in [
+        (
+            "v",
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=25:duration=4",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-g",
+                "25",
+            ]
+            .as_slice(),
+        ),
+        (
+            "a",
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=4",
+                "-vn",
+                "-c:a",
+                "aac",
+            ]
+            .as_slice(),
+        ),
+    ] {
+        std::fs::create_dir_all(site.join(folder)).unwrap();
+        // Run inside the folder: the muxer writes its init section beside
+        // the working directory, not beside the playlist.
+        let status = std::process::Command::new(&ffmpeg)
+            .current_dir(site.join(folder))
+            .args(["-hide_banner", "-loglevel", "error", "-y"])
+            .args(input)
+            .args([
+                "-f",
+                "hls",
+                "-hls_time",
+                "1",
+                "-hls_playlist_type",
+                "vod",
+                "-hls_segment_type",
+                "fmp4",
+            ])
+            .arg("index.m3u8")
+            .status()
+            .unwrap();
+        assert!(status.success(), "building the {folder} playlist");
+    }
+    std::fs::write(
+        site.join("master.m3u8"),
+        "#EXTM3U\n\
+         #EXT-X-MEDIA:URI=\"a/index.m3u8\",TYPE=AUDIO,GROUP-ID=\"snd\",NAME=\"Default\",DEFAULT=YES,AUTOSELECT=YES\n\
+         #EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=320x240,AUDIO=\"snd\"\n\
+         v/index.m3u8\n",
+    )
+    .unwrap();
+    let base = serve(site.clone());
+
+    // The engine finds the converter where the test fetched it.
+    let engine = Engine::new(&data_dir(), Settings::default(), |_| {}).unwrap();
+    let source = Source {
+        url: format!("{base}/master.m3u8"),
+        ..Source::default()
+    };
+    let probe = rt.block_on(engine.probe(source.clone())).unwrap();
+    let hls = probe.hls.clone().expect("a video playlist");
+    assert!(hls.audio.is_some(), "its sound playlist is found: {hls:?}");
+
+    let out = out_dir("hls-out");
+    for (pick, name, want) in [
+        (None, "talk.mp4", vec!["Video", "Audio"]),
+        (Some(Pick::VideoOnly), "silent.mp4", vec!["Video"]),
+        (Some(Pick::AudioOnly), "sound.m4a", vec!["Audio"]),
+    ] {
+        let id = engine
+            .add(AddRequest {
+                source: source.clone(),
+                probe: Some(probe.clone()),
+                file_name: Some(name.into()),
+                folder: out.clone(),
+                start: Start::Now,
+                variant: None,
+                connections: None,
+                media: pick.map(|pick| MediaSpec {
+                    pick,
+                    container: None,
+                }),
+                convert: None,
+            })
+            .unwrap();
+        assert_eq!(engine.view(&id).unwrap().kind, Kind::Hls);
+        let path = wait_done(&engine, &id);
+        let kinds = streams(&ffmpeg, &path);
+        let got: Vec<&str> = kinds
+            .iter()
+            .map(|s| s.split(':').next().unwrap_or_default())
+            .collect();
+        assert_eq!(got, want, "{name}: {kinds:?}");
+        let leftovers: Vec<_> = std::fs::read_dir(&out)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| {
+                n.contains(".eon-")
+                    || Path::new(n)
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("part"))
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "nothing half-made is left: {leftovers:?}"
+        );
+    }
+    drop(engine);
+    let _ = std::fs::remove_dir_all(&site);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+#[ignore = "network: a real page, set EON_DM_MEDIA_URL"]
+fn a_name_with_turkish_letters_comes_back_whole_with_aac_sound() {
+    // The extractor once wrote the finished file's name in the console's code
+    // page, and a name with "ğ" in it failed a finished download.
+    let Ok(url) = std::env::var("EON_DM_MEDIA_URL") else {
+        eprintln!("EON_DM_MEDIA_URL is not set; nothing to do");
+        return;
+    };
+    let engine = Engine::new(&data_dir(), Settings::default(), |_| {}).unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let source = Source {
+        url,
+        ..Source::default()
+    };
+    let probe = rt.block_on(engine.probe(source.clone())).unwrap();
+    let out = out_dir("turkish");
+    let id = engine
+        .add(AddRequest {
+            source,
+            probe: Some(probe),
+            file_name: Some("Buzdağı şarkısı ığüşöç.mp4".into()),
+            folder: out.clone(),
+            start: Start::Now,
+            variant: None,
+            connections: None,
+            media: Some(MediaSpec {
+                pick: Pick::Height(240),
+                container: Some("mp4".into()),
+            }),
+            convert: None,
+        })
+        .unwrap();
+    let path = wait_done(&engine, &id);
+    assert_eq!(
+        path.file_name().unwrap().to_string_lossy(),
+        "Buzdağı şarkısı ığüşöç.mp4"
+    );
+    let kinds = streams(&tools::ffmpeg_path(&data_dir()).unwrap(), &path);
+    assert!(
+        kinds.iter().any(|s| s.starts_with("Audio: aac")),
+        "MP4 gets AAC sound: {kinds:?}"
+    );
+    drop(engine);
+    let _ = std::fs::remove_dir_all(&out);
+}

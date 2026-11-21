@@ -123,6 +123,59 @@ pub async fn convert(ffmpeg: &Path, input: &Path, target: &str) -> Result<PathBu
     Err(Error::Unsupported(last))
 }
 
+/// The container a file's name asks for, as the converter names it.
+fn container_of(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("mkv") => "matroska",
+        Some("webm") => "webm",
+        Some("ts") => "mpegts",
+        _ => "mp4",
+    }
+}
+
+/// Join a picture-only and a sound-only file into `target` without
+/// re-encoding. Written aside and renamed, so `target` is never half a file.
+pub async fn join(
+    ffmpeg: &Path,
+    picture: &Path,
+    sound: &Path,
+    target: &Path,
+) -> Result<PathBuf, Error> {
+    let aside = crate::state::part_path(target);
+    let format = container_of(target);
+    let mut cmd = tools::command(ffmpeg);
+    cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(picture)
+        .arg("-i")
+        .arg(sound)
+        .args(["-map", "0:v:0", "-map", "1:a:0", "-c", "copy"]);
+    if format == "mp4" {
+        cmd.args(["-movflags", "+faststart"]);
+    }
+    let out = cmd
+        .args(["-f", format])
+        .arg(&aside)
+        .output()
+        .await
+        .map_err(|e| Error::Io(e.to_string()))?;
+    if !out.status.success() || std::fs::metadata(&aside).map_or(true, |m| m.len() == 0) {
+        let _ = std::fs::remove_file(&aside);
+        return Err(Error::Unsupported(
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("picture and sound could not be joined")
+                .to_owned(),
+        ));
+    }
+    std::fs::rename(&aside, target).map_err(|e| Error::Io(e.to_string()))?;
+    Ok(target.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
