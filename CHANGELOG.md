@@ -7,17 +7,19 @@ SPDX-FileCopyrightText: 2026 EON contributors
 
 ## v0.0.1 — 21 November 2026
 
-**Downloads from pages that play video or sound.** This covers YouTube, Instagram, X
-(Twitter), TikTok and many others: paste the page's address, choose a quality, sound only
-or picture only, and it downloads like any other file.
+**Downloads from pages that play video or sound.** Paste a page's address instead of a
+file's, choose a quality, sound only or picture only, and it downloads like any other
+file: paused, resumed and shown in the list. This works on most sites that play video,
+through a general-purpose open-source extractor and FFmpeg. Both are fetched on first use
+and checked against their published SHA-256. DRM-protected streams are refused (plan
+madde 44b).
 
-Tested against YouTube for real:
+Tested against a real video page:
 - the whole video as MP4, and the sound alone as MP3, with the finished file's SHA-256;
-- 1080p on offer, up to 2160p.
+- qualities from 144p up to 2160p on offer.
 
-An Instagram reel was also recognised, with its qualities. Pages that need an account, or
-that a site blocks for your address, say so instead of failing quietly.
-
+Pages that need an account, or that a site blocks for your address, say so instead of
+failing quietly.
 
 - **Settings apply to running downloads.** Connections per download, downloads at the same
   time and the speed limit change the transfer in place: fewer connections means the
