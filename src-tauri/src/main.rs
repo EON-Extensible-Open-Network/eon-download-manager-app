@@ -104,6 +104,9 @@ struct App {
     pending: Mutex<Vec<Handoff>>,
     /// The language the interface loaded, for notifications and the tray.
     lang: Mutex<String>,
+    /// Held while the window runs: the browser's host reads it to know the
+    /// inbox is being watched.
+    _window_lock: Option<std::fs::File>,
 }
 
 impl App {
@@ -791,6 +794,27 @@ fn ticker(app: tauri::AppHandle, dirty: Arc<AtomicBool>) {
     });
 }
 
+/// The browser's hand-offs: the host leaves each in the inbox and waits until
+/// it is taken. Read here, not handed over by a second process, because a
+/// browser may end every process the host started (see native.rs).
+/// `early`: the ones named on this start's command line.
+fn inbox_watch(app: tauri::AppHandle, early: Vec<Handoff>) {
+    std::thread::spawn(move || {
+        for handoff in early {
+            deliver(&app, handoff);
+        }
+        let data = app.state::<Arc<App>>().data.clone();
+        loop {
+            for file in native::waiting(&data) {
+                if let Some(handoff) = native::take(&data, &file) {
+                    deliver(&app, handoff);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    });
+}
+
 /// Download links copied to the clipboard are offered (setting, on by default).
 /// Read in Rust: the interface never sees the clipboard.
 fn clipboard_watch(app: tauri::AppHandle) {
@@ -866,6 +890,7 @@ fn window(args: Vec<String>) {
             })
             .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
             app.manage(Arc::new(App {
+                _window_lock: native::hold_window_lock(&data),
                 engine,
                 settings: Mutex::new(settings),
                 data: data.clone(),
@@ -886,9 +911,7 @@ fn window(args: Vec<String>) {
             tray(&handle)?;
             ticker(handle.clone(), dirty);
             clipboard_watch(handle.clone());
-            for h in early {
-                deliver(&handle, h);
-            }
+            inbox_watch(handle.clone(), early);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

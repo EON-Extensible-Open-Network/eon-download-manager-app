@@ -5,7 +5,30 @@ SPDX-FileCopyrightText: 2026 EON contributors
 
 # Changelog
 
-## Unreleased
+## v0.0.2 — 22 November 2026
+
+**Firefox hands downloads over.** In Firefox the extension caught a download, cancelled
+it in the browser and passed it on, and the window never received it: the download was
+lost. The host passed the hand-off to a second copy of the program, and on Windows
+Firefox ends every process the host started as soon as the host exits, so that copy died
+before it reached the window. Chromium browsers do not do this, which is why it passed
+every check run so far. Now:
+
+- the window reads the hand-offs waiting for it itself, a few times a second, and holds a
+  lock while it runs so the host knows it is there;
+- the host answers *ok* only once the window has taken the hand-off. If it does not
+  within 15 seconds, the host withdraws it and answers *unavailable*, and the extension
+  leaves the download to the browser. A download is no longer cancelled on the strength
+  of a hand-off nobody received (eon-download-manager-spec, `docs/handoff.md`);
+- when no window is running, the host starts it so that the browser cannot end it: a
+  process outside the browser's job, or failing that, through the Windows shell.
+
+Verified in a real Firefox 160 against a separately built copy: a 40 MB download on a
+page was taken from Firefox, and the running window opened its sheet. Firefox kept
+nothing. The 30 window checks pass.
+
+The extension's minimum Firefox version is 140, the first that reads its data-collection
+statement.
 
 **The extension installs in Firefox.** Release Firefox keeps only add-ons Mozilla has
 signed; an unpacked one is gone at the next start, so until now it could not be installed

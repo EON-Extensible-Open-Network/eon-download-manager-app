@@ -7,8 +7,11 @@
 //! The browser hand-off (eon-download-manager-spec, `docs/handoff.md`).
 //!
 //! The browser starts this executable as a native messaging host. In that mode
-//! it reads one message, checks it, leaves it in the data folder, starts or
-//! wakes the window with it, answers, and exits. It never downloads anything
+//! it reads one message, checks it, leaves it in the data folder's inbox,
+//! starts the window if none is running, waits until the window has taken it,
+//! answers, and exits. The window reads the inbox itself: a browser may end
+//! every process the host started the moment the host exits (Firefox does, on
+//! Windows), so nothing may depend on a child outliving it. It never downloads anything
 //! itself. Registration — telling browsers where the host is — happens only
 //! when the person presses *Connect browsers*.
 
@@ -289,56 +292,147 @@ pub fn run_host(data_dir: &Path) -> i32 {
     0
 }
 
-/// Leave the hand-off in the inbox and start the window with it; a window that
-/// is already running receives it through the single-instance plugin.
+/// How long the host waits for the window to take a hand-off, a cold start of
+/// the window included.
+const TAKE_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Leave the hand-off in the inbox, start the window if none is running, and
+/// answer only once the window has taken it. If it never does, take the
+/// hand-off back and say so, so the browser keeps the download instead of
+/// losing it.
 fn deliver(data_dir: &Path, handoff: &Handoff) -> Result<(), String> {
+    deliver_within(data_dir, handoff, TAKE_WAIT)
+}
+
+fn deliver_within(
+    data_dir: &Path,
+    handoff: &Handoff,
+    wait: std::time::Duration,
+) -> Result<(), String> {
     let inbox = data_dir.join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
+    // Written aside and renamed, so the window never reads half a file.
+    let part = inbox.join(format!("{stamp}.part"));
     let file = inbox.join(format!("{stamp}.json"));
     std::fs::write(
-        &file,
+        &part,
         serde_json::to_vec(handoff).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    spawn_detached(
-        &exe,
-        &["--handoff".into(), file.to_string_lossy().into_owned()],
-    )
+    std::fs::rename(&part, &file).map_err(|e| e.to_string())?;
+    if !window_running(data_dir) {
+        let started = std::env::current_exe()
+            .map_err(|e| e.to_string())
+            .and_then(|exe| start_window(&exe));
+        if let Err(e) = started {
+            let _ = std::fs::remove_file(&file);
+            return Err(e);
+        }
+    }
+    let deadline = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < deadline {
+        if !file.exists() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    match std::fs::remove_file(&file) {
+        Ok(()) => Err("the window did not take the download".into()),
+        // Taken at the last moment.
+        Err(_) => Ok(()),
+    }
 }
 
+/// The window holds this file locked for as long as it runs.
+const WINDOW_LOCK: &str = "window.lock";
+
+/// Taken by the window when it starts and held until it exits: how the host
+/// knows there is a window reading the inbox.
+pub fn hold_window_lock(data_dir: &Path) -> Option<std::fs::File> {
+    let _ = std::fs::create_dir_all(data_dir);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(data_dir.join(WINDOW_LOCK))
+        .ok()?;
+    file.try_lock().ok()?;
+    Some(file)
+}
+
+fn window_running(data_dir: &Path) -> bool {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .write(true)
+        .open(data_dir.join(WINDOW_LOCK))
+    else {
+        return false;
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            false
+        }
+        Err(std::fs::TryLockError::WouldBlock) => true,
+        Err(std::fs::TryLockError::Error(_)) => false,
+    }
+}
+
+/// Hand-offs waiting in the inbox, oldest first. One nobody took for minutes
+/// is dropped: the host has long since told the browser, which kept the
+/// download itself.
+pub fn waiting(data_dir: &Path) -> Vec<PathBuf> {
+    const STALE: std::time::Duration = std::time::Duration::from_secs(120);
+    let Ok(dir) = std::fs::read_dir(data_dir.join("inbox")) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in dir.flatten() {
+        let path = entry.path();
+        let age = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .unwrap_or_default();
+        if age > STALE {
+            let _ = std::fs::remove_file(&path);
+        } else if path.extension().is_some_and(|e| e == "json") {
+            out.push(path);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Start the window, out of the browser's reach. It finds the hand-off in the
+/// inbox itself.
 #[cfg(windows)]
-fn spawn_detached(exe: &Path, args: &[String]) -> Result<(), String> {
+fn start_window(exe: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     // The browser reads the host's output until it closes: the window must not
     // inherit it, or the browser's side never ends.
-    let spawn = |flags: u32| {
-        std::process::Command::new(exe)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(flags)
-            .spawn()
-    };
-    // Out of the browser's job object if it allows that, so closing the
-    // browser never closes the downloads.
-    spawn(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
-        .or_else(|_| spawn(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP))
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(not(windows))]
-fn spawn_detached(exe: &Path, args: &[String]) -> Result<(), String> {
-    std::process::Command::new(exe)
-        .args(args)
+    let spawned = std::process::Command::new(exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
+        .spawn();
+    if spawned.is_ok() {
+        return Ok(());
+    }
+    // Firefox runs the host in a job that may not be left, and ends the whole
+    // job when the host exits: a window started from here would die with it.
+    // The shell starts it instead, as if the person had opened it.
+    let windir =
+        std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+    std::process::Command::new(windir.join("explorer.exe"))
+        .arg(exe)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -347,17 +441,37 @@ fn spawn_detached(exe: &Path, args: &[String]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[cfg(not(windows))]
+fn start_window(exe: &Path) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+    // Its own process group: a browser that ends the host's group does not
+    // end the window.
+    std::process::Command::new(exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Read and delete a hand-off left in the inbox — and only there: `--handoff`
 /// on a command line can never make the program read or delete another file.
+/// It is claimed by a rename first, so of two readers only one gets it.
 pub fn take(data_dir: &Path, file: &Path) -> Option<Handoff> {
     let inbox = data_dir.join("inbox").canonicalize().ok()?;
     let inbox_file = file.canonicalize().ok()?;
-    if inbox_file.parent() != Some(inbox.as_path()) {
+    if inbox_file.parent() != Some(inbox.as_path())
+        || inbox_file.extension().is_none_or(|e| e != "json")
+    {
         return None;
     }
-    let text = std::fs::read(&inbox_file).ok()?;
-    let _ = std::fs::remove_file(&inbox_file);
-    serde_json::from_slice(&text).ok()
+    let claimed = inbox_file.with_extension("taken");
+    std::fs::rename(&inbox_file, &claimed).ok()?;
+    let text = std::fs::read(&claimed);
+    let _ = std::fs::remove_file(&claimed);
+    serde_json::from_slice(&text.ok()?).ok()
 }
 
 // ---- registration --------------------------------------------------------------
@@ -572,6 +686,75 @@ pub fn disconnect(data_dir: &Path) {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("eon-dm-native-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("inbox")).unwrap();
+        dir
+    }
+
+    fn a_download() -> Handoff {
+        check(&json!({ "handoff": 0, "kind": "download", "items": [{ "url": "https://example.org/a.zip" }] })).unwrap()
+    }
+
+    #[test]
+    fn a_handoff_is_taken_once_and_only_from_the_inbox() {
+        let data = scratch("take");
+        let file = data.join("inbox").join("1.json");
+        std::fs::write(&file, serde_json::to_vec(&a_download()).unwrap()).unwrap();
+        assert_eq!(waiting(&data), vec![file.clone()]);
+        assert!(take(&data, &file).is_some());
+        assert!(take(&data, &file).is_none(), "a second reader gets nothing");
+        assert!(waiting(&data).is_empty());
+        let outside = data.join("x.json");
+        std::fs::write(&outside, serde_json::to_vec(&a_download()).unwrap()).unwrap();
+        assert!(take(&data, &outside).is_none());
+        assert!(
+            outside.exists(),
+            "a file outside the inbox is never deleted"
+        );
+    }
+
+    #[test]
+    fn the_window_lock_says_whether_a_window_runs() {
+        let data = scratch("lock");
+        assert!(!window_running(&data));
+        let held = hold_window_lock(&data).unwrap();
+        assert!(window_running(&data));
+        assert!(hold_window_lock(&data).is_none(), "one window");
+        drop(held);
+        assert!(!window_running(&data));
+    }
+
+    #[test]
+    fn the_host_answers_once_the_window_has_taken_it() {
+        let data = scratch("deliver");
+        let _window = hold_window_lock(&data).unwrap();
+        let reader = {
+            let data = data.clone();
+            std::thread::spawn(move || loop {
+                if let Some(file) = waiting(&data).first() {
+                    return take(&data, file);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            })
+        };
+        deliver_within(&data, &a_download(), std::time::Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            reader.join().unwrap().unwrap().items[0].url,
+            "https://example.org/a.zip"
+        );
+    }
+
+    #[test]
+    fn a_handoff_nobody_takes_is_taken_back() {
+        let data = scratch("untaken");
+        let _window = hold_window_lock(&data).unwrap();
+        let answer = deliver_within(&data, &a_download(), std::time::Duration::from_millis(300));
+        assert!(answer.is_err(), "the browser must keep the download");
+        assert!(waiting(&data).is_empty());
+    }
 
     #[test]
     fn messages_are_checked_at_the_door() {
