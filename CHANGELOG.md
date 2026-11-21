@@ -5,6 +5,16 @@ SPDX-FileCopyrightText: 2026 EON contributors
 
 # Changelog
 
+## Unreleased
+
+**The extension installs in Firefox.** Release Firefox keeps only add-ons Mozilla has
+signed; an unpacked one is gone at the next start, so until now it could not be installed
+there at all. A new `firefox` workflow has each release's extension signed by Mozilla as
+*unlisted* (checked and signed, shown in no catalogue) and attaches
+`eon-download-manager-extension-<tag>-firefox.xpi` to the release with its checksum.
+Opening that file in Firefox installs it. Verified first in a separate Firefox 160
+profile: the extension loads and the application records its hello.
+
 ## v0.0.1 — 21 November 2026
 
 **Downloads from pages that play video or sound.** Paste a page's address instead of a

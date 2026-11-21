@@ -52,8 +52,10 @@ Linux and macOS.
 2. **Browser** (optional): the first start shows the way. Browsers are told where the
    program is on their own; *Add to Chrome / Edge / Brave* opens that browser's extensions
    page and the extension's folder — turn on *Developer mode*, choose *Load unpacked*,
-   pick the folder. The window shows when the extension says hello. (Store listings, which
-   make this one click, will come.)
+   pick the folder. **Firefox** installs only add-ons Mozilla has signed, so it gets its own
+   file: open `eon-download-manager-extension-*-firefox.xpi` from the release in Firefox
+   and choose *Add*. It is signed but not listed in any catalogue. The window shows when
+   the extension says hello. (Store listings, which make this one click, will come.)
 
 On Windows, Smart App Control — if it is on — refuses unsigned downloads.
 

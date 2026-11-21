@@ -1,0 +1,96 @@
+name: firefox
+
+# Release Firefox installs only add-ons Mozilla has signed: an unsigned one can
+# be loaded for a session and is gone at the next start. Chromium has its
+# "Load unpacked"; Firefox has no such door, so without this the extension
+# cannot be installed there at all.
+#
+# Mozilla signs add-ons "unlisted" -- checked by its automatic validator,
+# signed, handed back, and listed nowhere. That keeps the owner's decision of
+# no public launch before beta: the signed .xpi goes on our own release, and a
+# click on it in Firefox installs it.
+#
+# The credentials belong to the owner's addons.mozilla.org account and live
+# only in this repository's secrets (AMO_JWT_ISSUER, AMO_JWT_SECRET). Without
+# them the job says so and stops; it never fails a release.
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release whose extension to sign (e.g. v0.0.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Credentials
+        id: creds
+        run: |
+          if [ -z "$AMO_JWT_ISSUER" ] || [ -z "$AMO_JWT_SECRET" ]; then
+            echo "::notice::AMO_JWT_ISSUER / AMO_JWT_SECRET are not set; the Firefox package is not signed."
+            echo "have=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.have == 'yes'
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: The extension is the release's version
+        if: steps.creds.outputs.have == 'yes'
+        run: |
+          want="${TAG#v}"
+          got="$(jq -r .version extension/manifest.json)"
+          echo "tag $TAG, extension $got"
+          [ "$want" = "$got" ]
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.have == 'yes'
+        with:
+          node-version: 22
+
+      - name: Sign (unlisted)
+        if: steps.creds.outputs.have == 'yes'
+        run: |
+          npx --yes web-ext@8.10.0 sign \
+            --source-dir extension --artifacts-dir signed \
+            --channel unlisted \
+            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" \
+            --approval-timeout 1800000
+          ls -la signed
+
+      - name: The package carries Mozilla's signature
+        if: steps.creds.outputs.have == 'yes'
+        run: |
+          xpi="$(ls signed/*.xpi | head -1)"
+          unzip -l "$xpi" | grep -E 'META-INF/(cose\.sig|mozilla\.rsa)'
+          mkdir dist
+          cp "$xpi" "dist/eon-download-manager-extension-${TAG}-firefox.xpi"
+
+      - name: Attach to the release, checksum included
+        if: steps.creds.outputs.have == 'yes'
+        working-directory: dist
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p SHA256SUMS.txt
+          grep -v -- '-firefox\.xpi$' SHA256SUMS.txt > sums || true
+          sha256sum "eon-download-manager-extension-${TAG}-firefox.xpi" >> sums
+          mv sums SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber \
+            "eon-download-manager-extension-${TAG}-firefox.xpi" SHA256SUMS.txt
