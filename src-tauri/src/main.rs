@@ -795,8 +795,8 @@ fn ticker(app: tauri::AppHandle, dirty: Arc<AtomicBool>) {
 }
 
 /// The browser's hand-offs: the host leaves each in the inbox and waits until
-/// it is taken. Read here, not handed over by a second process, because a
-/// browser may end every process the host started (see native.rs).
+/// it is taken. Read here rather than handed over by a second copy of the
+/// program, which lost hand-offs under Firefox (see native.rs).
 /// `early`: the ones named on this start's command line.
 fn inbox_watch(app: tauri::AppHandle, early: Vec<Handoff>) {
     std::thread::spawn(move || {

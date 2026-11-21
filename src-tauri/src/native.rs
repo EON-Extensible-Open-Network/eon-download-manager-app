@@ -9,9 +9,10 @@
 //! The browser starts this executable as a native messaging host. In that mode
 //! it reads one message, checks it, leaves it in the data folder's inbox,
 //! starts the window if none is running, waits until the window has taken it,
-//! answers, and exits. The window reads the inbox itself: a browser may end
-//! every process the host started the moment the host exits (Firefox does, on
-//! Windows), so nothing may depend on a child outliving it. It never downloads anything
+//! answers, and exits. The window reads the inbox itself. Passing the hand-off
+//! through a second copy of the program lost it under Firefox (which runs the
+//! host in a job object), so nothing depends on such a copy any more, and the
+//! answer is not given until the window has it. It never downloads anything
 //! itself. Registration — telling browsers where the host is — happens only
 //! when the person presses *Connect browsers*.
 
@@ -426,9 +427,10 @@ fn start_window(exe: &Path) -> Result<(), String> {
     if spawned.is_ok() {
         return Ok(());
     }
-    // Firefox runs the host in a job that may not be left, and ends the whole
-    // job when the host exits: a window started from here would die with it.
-    // The shell starts it instead, as if the person had opened it.
+    // A browser may run the host in a job object (Firefox does) and end the
+    // job when the host exits. Leaving the job is allowed under Firefox today
+    // (checked 22 Nov 2026); where it is not, a window started inside the job
+    // could die with it, so the shell starts it, as if the person had opened it.
     let windir =
         std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
     std::process::Command::new(windir.join("explorer.exe"))
